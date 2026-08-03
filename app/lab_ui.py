@@ -557,6 +557,42 @@ LAB_UI = r"""<!doctype html>
 
                 <!-- Committed Command Output Card -->
                 <div id="projectRunCommittedCommand" style="display:none; font-size:12px; color:var(--text-dim); background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:6px; font-family:'JetBrains Mono', monospace;"></div>
+
+                <!-- Change Review Section -->
+                <div id="projectRunChangeReview" style="display:none; background:rgba(0,0,0,0.25); border:1px solid var(--border); border-radius:8px; padding:16px; margin-top:10px; flex-direction:column; gap:12px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px;">
+                    <span style="font-weight:700; color:var(--accent-bright); font-size:14px;">Change Review</span>
+                    <div id="projectRunChangeStatus" style="font-size:12px; color:var(--text-dim);"></div>
+                  </div>
+
+                  <div style="display:flex; flex-direction:column; gap:6px;">
+                    <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Files changed:</strong>
+                    <div id="projectRunChangedFiles" style="font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--text); background:rgba(0,0,0,0.3); padding:8px; border-radius:6px; max-height:160px; overflow:auto;"></div>
+                  </div>
+
+                  <div style="display:flex; flex-direction:column; gap:6px;">
+                    <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Verification:</strong>
+                    <div id="projectRunVerificationSummary" style="font-size:12px; color:#a5b4fc; background:rgba(0,0,0,0.3); padding:8px; border-radius:6px; max-height:100px; overflow:auto;"></div>
+                  </div>
+
+                  <div id="projectRunModelUsage" style="font-size:12px; color:var(--text-dim); font-family:'JetBrains Mono', monospace; display:flex; gap:16px;">
+                    <span>Model usage: 0 calls</span>
+                  </div>
+
+                  <div style="display:flex; flex-direction:column; gap:6px;">
+                    <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Delivery:</strong>
+                    <div id="projectRunDeliverySummary" style="font-size:12px; color:var(--text); background:rgba(0,0,0,0.3); padding:8px; border-radius:6px;"></div>
+                  </div>
+
+                  <!-- Safe Revert Section -->
+                  <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; border-top:1px solid var(--border); padding-top:12px;">
+                    <div id="projectRunRevertStatus" style="font-size:12px; color:var(--text-dim);">Revert this run</div>
+                    <button class="btn btn-danger" id="projectRunRevertBtn" disabled onclick="revertProjectRunChanges(latestProjectRunCommittedCommandId)">
+                      <span>↩️</span>
+                      <span>Safe Revert</span>
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1513,6 +1549,7 @@ window.fetch=(input,init={})=>{
     }
 
     let latestProjectRunPreview = null;
+    let latestProjectRunCommittedCommandId = null;
 
     function renderProjectRunPreview(preview) {
       latestProjectRunPreview = preview;
@@ -1645,6 +1682,9 @@ window.fetch=(input,init={})=>{
           outputCard.textContent = `Command ID: ${data.command_id} | Status: ${data.status} | Execution has not started | Model calls: ${data.model_calls} | Tokens: ${data.total_tokens}`;
         }
 
+        latestProjectRunCommittedCommandId = data.command_id;
+        await loadProjectRunChangeReview(data.command_id);
+
         if (typeof openTask === 'function') {
           await openTask(data.command_id);
         } else if (typeof renderLiveMission === 'function') {
@@ -1666,6 +1706,134 @@ window.fetch=(input,init={})=>{
       }
     }
 
+    async function loadProjectRunChangeReview(commandId) {
+      if (!commandId) return;
+      try {
+        const res = await fetch(`/v1/supervisor/commands/${commandId}/change-review`);
+        if (!res.ok) return;
+        const review = await res.json();
+        renderProjectRunChangeReview(review);
+      } catch (err) {
+        console.error("Change review yüklenemedi:", err);
+      }
+    }
+
+    function renderProjectRunChangeReview(review) {
+      const reviewContainer = document.getElementById("projectRunChangeReview");
+      if (!reviewContainer || !review) return;
+
+      reviewContainer.style.display = "flex";
+
+      const statusEl = document.getElementById("projectRunChangeStatus");
+      if (statusEl) {
+        statusEl.textContent = `Status: ${review.status} (${review.changed_file_count} files changed)`;
+      }
+
+      const filesEl = document.getElementById("projectRunChangedFiles");
+      if (filesEl) {
+        filesEl.textContent = "";
+        if (review.changed_files && review.changed_files.length > 0) {
+          review.changed_files.forEach(f => {
+            const item = document.createElement("div");
+            item.style.marginBottom = "6px";
+
+            const header = document.createElement("div");
+            header.style.fontWeight = "bold";
+            header.textContent = `[${f.change_type.toUpperCase()}] ${f.relative_path}`;
+            item.appendChild(header);
+
+            if (f.text_diff_preview) {
+              const pre = document.createElement("pre");
+              pre.style.margin = "4px 0";
+              pre.style.padding = "6px";
+              pre.style.background = "rgba(0,0,0,0.4)";
+              pre.style.borderRadius = "4px";
+              pre.style.fontSize = "11px";
+              pre.style.maxHeight = "120px";
+              pre.style.overflow = "auto";
+              pre.textContent = f.text_diff_preview;
+              item.appendChild(pre);
+            }
+            filesEl.appendChild(item);
+          });
+        } else {
+          filesEl.textContent = "No file changes detected.";
+        }
+      }
+
+      const verifEl = document.getElementById("projectRunVerificationSummary");
+      if (verifEl) {
+        verifEl.textContent = "";
+        if (review.verification_summary && review.verification_summary.length > 0) {
+          review.verification_summary.forEach(v => {
+            const div = document.createElement("div");
+            div.textContent = `${v.task_id}: ${v.verification || 'No verification'} (${v.status})`;
+            verifEl.appendChild(div);
+          });
+        } else {
+          verifEl.textContent = "No verification records.";
+        }
+      }
+
+      const usageEl = document.getElementById("projectRunModelUsage");
+      if (usageEl) {
+        usageEl.textContent = `Model calls: ${review.model_calls} | Input tokens: ${review.input_tokens} | Output tokens: ${review.output_tokens}`;
+      }
+
+      const deliveryEl = document.getElementById("projectRunDeliverySummary");
+      if (deliveryEl) {
+        deliveryEl.textContent = review.delivery_summary || "Delivery details unavailable";
+      }
+
+      const revertBtn = document.getElementById("projectRunRevertBtn");
+      const revertStatus = document.getElementById("projectRunRevertStatus");
+      if (revertBtn && revertStatus) {
+        revertBtn.disabled = !review.can_revert;
+        if (review.can_revert) {
+          revertStatus.textContent = `Type REVERT ${review.command_id} to confirm`;
+        } else {
+          revertStatus.textContent = "Revert unavailable for this state";
+        }
+      }
+    }
+
+    async function revertProjectRunChanges(commandId) {
+      if (!commandId) return;
+      const expectedConfirmation = `REVERT ${commandId}`;
+      const userInput = prompt(`Değişiklikleri güvenle geri almak için '${expectedConfirmation}' yazın:`);
+      if (!userInput || userInput.trim() !== expectedConfirmation) {
+        alert("Onay dizesi eşleşmedi. Revert iptal edildi.");
+        return;
+      }
+
+      const revertStatus = document.getElementById("projectRunRevertStatus");
+      if (revertStatus) revertStatus.textContent = "Reverting changes...";
+
+      try {
+        const res = await fetch(`/v1/supervisor/commands/${commandId}/revert`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Prometheus-CSRF": "1"
+          },
+          body: JSON.stringify({ confirmation: expectedConfirmation })
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          if (revertStatus) revertStatus.textContent = `Reverted ${data.reverted.length} files successfully.`;
+          await loadProjectRunChangeReview(commandId);
+        } else {
+          if (revertStatus) revertStatus.textContent = `Revert failed: ${data.detail || 'Unknown error'}`;
+          alert(`Revert Hatası: ${data.detail || 'Bilinmeyen hata'}`);
+        }
+      } catch (err) {
+        if (revertStatus) revertStatus.textContent = `Error: ${err.message}`;
+        alert(`Ağ Hatası: ${err.message}`);
+      }
+    }
+
     document.getElementById('projectRunWorkspace')?.addEventListener('input', clearProjectRunPreview);
     document.getElementById('projectRunGoal')?.addEventListener('input', clearProjectRunPreview);
 
@@ -1681,11 +1849,13 @@ window.fetch=(input,init={})=>{
     loadTasks();
     if (activeMissionId) {
       openTask(activeMissionId);
+      loadProjectRunChangeReview(activeMissionId);
     }
     setInterval(() => {
       loadTasks();
       if (activeMissionId) {
         renderLiveMission(activeMissionId);
+        loadProjectRunChangeReview(activeMissionId);
       }
     }, 2000);
     setInterval(updateLiveActivityClock, 1000);

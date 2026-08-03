@@ -62,6 +62,9 @@ from app.core.schemas import (
     ProjectRunPreviewResponse,
     ProjectRunCommitRequest,
     ProjectRunCommitResponse,
+    RunChangeReviewResponse,
+    RunRevertRequest,
+    RunRevertResponse,
 )
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.routes import RouteCatalog
@@ -858,6 +861,47 @@ async def commit_project_run(
         raise HTTPException(status_code=422, detail=err_msg) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/change-review",
+    response_model=RunChangeReviewResponse,
+    tags=["supervisor"],
+)
+async def read_supervisor_change_review(
+    command_id: str,
+) -> RunChangeReviewResponse:
+    try:
+        return await app.state.supervisor.get_command_change_review(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Komut bulunamadı.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/revert",
+    response_model=RunRevertResponse,
+    tags=["supervisor"],
+)
+async def revert_supervisor_command_changes(
+    command_id: str,
+    payload: RunRevertRequest,
+) -> RunRevertResponse:
+    try:
+        return await app.state.supervisor.revert_command_changes(
+            command_id=command_id,
+            request=payload,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Komut bulunamadı.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 
 @app.get(

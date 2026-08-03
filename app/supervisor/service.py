@@ -25,7 +25,12 @@ from app.core.schemas import (
     ProjectRunPreviewTask,
     ProjectRunCommitRequest,
     ProjectRunCommitResponse,
+    RunFileChange,
+    RunChangeReviewResponse,
+    RunRevertRequest,
+    RunRevertResponse,
 )
+from app.supervisor.run_snapshots import RunSnapshotManager
 from app.workspace.policy import WorkspacePolicy
 from app.tools.base import ToolError
 from app.memory.attention import AttentionBroker
@@ -123,6 +128,7 @@ class SupervisorService:
         self.attention_broker = AttentionBroker()
         self.context_compiler = ContextCompiler()
         self.improvement = ImprovementService(settings)
+        self.snapshot_manager = RunSnapshotManager()
         self.forge = PrometheusForge(
             settings=settings,
             improvement=self.improvement,
@@ -5747,6 +5753,8 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                     f"{task.id} şu anda çalıştırılamaz: {task.status}"
                 )
 
+            self._capture_snapshot_if_needed(command, task)
+
             focused_protocol_changed = (
                 self._reconcile_focused_generation_revision(
                     command=command,
@@ -7087,5 +7095,123 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             execution_started=False,
             created=True,
         )
+
+    def _capture_snapshot_if_needed(
+        self,
+        command: SupervisorCommand,
+        task: SupervisorTask,
+    ) -> None:
+        try:
+            workspace_path = getattr(command, "project_run_workspace_path", ".") or "."
+            self.snapshot_manager.capture_task_snapshot(
+                command_id=command.id,
+                task_id=task.id,
+                workspace_path=workspace_path,
+                exact_files=task.exact_files,
+                workspace_root=self.settings.workspace_root,
+                max_file_bytes=self.settings.workspace_max_file_bytes,
+                max_search_results=self.settings.workspace_max_search_results,
+            )
+            self._event(
+                command,
+                type="run_snapshot_captured",
+                task_id=task.id,
+                message=f"{task.id} için pre-write snapshot alındı.",
+                data={
+                    "task_id": task.id,
+                    "exact_files": task.exact_files,
+                },
+            )
+        except Exception as exc:
+            err_str = str(exc)
+            if "Sensitive" in err_str or "limitini aşıyor" in err_str or "geçersiz" in err_str:
+                raise ValueError(f"Snapshot alınamadı: {exc}") from exc
+
+    async def get_command_change_review(
+        self,
+        command_id: str,
+    ) -> RunChangeReviewResponse:
+        command = await self.store.get(command_id)
+        changed_files = self.snapshot_manager.build_command_change_review(
+            command=command,
+            workspace_root=self.settings.workspace_root,
+            max_file_bytes=self.settings.workspace_max_file_bytes,
+            max_search_results=self.settings.workspace_max_search_results,
+        )
+
+        changed_file_count = len(
+            [f for f in changed_files if f.change_type != "unchanged"]
+        )
+
+        verification_summary = [
+            {
+                "task_id": t.id,
+                "title": t.title,
+                "verification": t.verification,
+                "effective_verification": t.effective_verification,
+                "status": t.status,
+            }
+            for t in command.tasks
+        ]
+
+        terminal_statuses = {"completed", "failed", "cancelled"}
+        is_terminal = command.status in terminal_statuses
+
+        can_revert = is_terminal and any(f.revertable for f in changed_files)
+
+        model_calls = 0
+        input_tokens = 0
+        output_tokens = 0
+        last_resp = getattr(command, "last_agent_response", None)
+        if last_resp:
+            model_calls = getattr(last_resp, "model_calls_used", 0)
+
+        delivery_summary = getattr(command, "last_answer", None) or f"Komut durumu: {command.status}"
+
+        return RunChangeReviewResponse(
+            command_id=command.id,
+            status=command.status,
+            terminal=is_terminal,
+            changed_files=changed_files,
+            changed_file_count=changed_file_count,
+            verification_summary=verification_summary,
+            model_calls=model_calls,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            delivery_summary=delivery_summary,
+            can_revert=can_revert,
+            revert_confirmation=f"REVERT {command.id}",
+        )
+
+    async def revert_command_changes(
+        self,
+        command_id: str,
+        request: RunRevertRequest,
+    ) -> RunRevertResponse:
+        command = await self.store.get(command_id)
+        result = self.snapshot_manager.revert_command_changes(
+            command=command,
+            workspace_root=self.settings.workspace_root,
+            confirmation=request.confirmation,
+            max_file_bytes=self.settings.workspace_max_file_bytes,
+            max_search_results=self.settings.workspace_max_search_results,
+        )
+
+        self._event(
+            command,
+            type="run_changes_reverted",
+            message=(
+                f"Komut değişiklikleri geri alındı ({len(result.reverted)} dosya geri alındı, "
+                f"{len(result.conflicts)} çakışma)."
+            ),
+            data={
+                "reverted": result.reverted,
+                "skipped": result.skipped,
+                "conflicts": result.conflicts,
+            },
+        )
+        await self.store.put(command)
+        return result
+
 
 

@@ -457,3 +457,45 @@ class ProjectRunCommitResponse(BaseModel):
     created: bool
 
 
+class RunFileChange(BaseModel):
+    relative_path: str
+    change_type: Literal["unchanged", "added", "modified", "deleted"]
+    existed_before: bool
+    exists_after: bool
+    sha256_before: str | None = None
+    sha256_after: str | None = None
+    size_before: int | None = None
+    size_after: int | None = None
+    text_diff_preview: str | None = None
+    revertable: bool
+    revert_block_reason: str | None = None
+
+
+class RunChangeReviewResponse(BaseModel):
+    command_id: str
+    status: str
+    terminal: bool
+    changed_files: list[RunFileChange]
+    changed_file_count: int
+    verification_summary: list[dict[str, Any]] = Field(default_factory=list)
+    model_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    delivery_summary: str | None = None
+    can_revert: bool
+    revert_confirmation: str
+
+
+class RunRevertRequest(BaseModel):
+    confirmation: str
+
+
+class RunRevertResponse(BaseModel):
+    command_id: str
+    reverted: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    event_recorded: bool = True
+
+
+
