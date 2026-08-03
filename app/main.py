@@ -68,6 +68,9 @@ from app.core.schemas import (
     WorkspaceProjectsResponse,
     WorkspaceProjectSelectRequest,
     WorkspaceProjectSelectResponse,
+    ProjectRunHistoryResponse,
+    ProjectRunRetryRequest,
+    ProjectRunRetryResponse,
 )
 from app.workspace.projects import WorkspaceProjectManager
 from app.orchestration.orchestrator import Orchestrator
@@ -936,6 +939,57 @@ async def select_workspace_project(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/supervisor/project-runs",
+    response_model=ProjectRunHistoryResponse,
+    tags=["supervisor"],
+)
+async def list_workspace_project_runs(
+    workspace_path: str = ".",
+    status: str = "all",
+    limit: int = 20,
+    offset: int = 0,
+) -> ProjectRunHistoryResponse:
+    try:
+        supervisor = app.state.supervisor
+        return await supervisor.list_project_run_history(
+            workspace_path=workspace_path,
+            status_filter=status,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/tasks/{task_id}/retry-request",
+    response_model=ProjectRunRetryResponse,
+    tags=["supervisor"],
+)
+async def request_supervisor_project_run_task_retry(
+    command_id: str,
+    task_id: str,
+    payload: ProjectRunRetryRequest,
+) -> ProjectRunRetryResponse:
+    try:
+        supervisor = app.state.supervisor
+        return await supervisor.request_project_run_task_retry(
+            command_id=command_id,
+            task_id=task_id,
+            request=payload,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 
 

@@ -535,5 +535,58 @@ class WorkspaceProjectSelectResponse(BaseModel):
     selected: bool = True
 
 
+class ProjectRunHistoryTaskSummary(BaseModel):
+    task_id: str
+    title: str
+    status: str
+    approval_state: str | None = None
+    attempts: int
+    exact_file_count: int
+    verification: str
+    retry_available: bool
+    retry_block_reason: str | None = None
 
 
+class ProjectRunHistoryItem(BaseModel):
+    command_id: str
+    goal: str
+    workspace_path: str
+    status: str
+    created_at: str | None = None
+    updated_at: str | None = None
+    task_count: int
+    completed_task_count: int
+    failed_task_count: int
+    waiting_approval_count: int
+    progress_percent: int
+    changed_file_count: int
+    model_calls: int
+    input_tokens: int
+    output_tokens: int
+    last_event: str | None = None
+    tasks: list[ProjectRunHistoryTaskSummary] = Field(default_factory=list)
+
+
+class ProjectRunHistoryResponse(BaseModel):
+    workspace_path: str
+    status_filter: str
+    items: list[ProjectRunHistoryItem] = Field(default_factory=list)
+    total: int
+    limit: int
+    offset: int
+
+
+class ProjectRunRetryRequest(BaseModel):
+    reason: str | None = None
+
+
+class ProjectRunRetryResponse(BaseModel):
+    command_id: str
+    task_id: str
+    approval_id: str
+    approval_version: int
+    approval_state: str
+    task_status: str
+    execution_started: bool = False
+    model_calls: int = 0
+    total_tokens: int = 0

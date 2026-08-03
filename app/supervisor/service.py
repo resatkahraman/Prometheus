@@ -29,6 +29,11 @@ from app.core.schemas import (
     RunChangeReviewResponse,
     RunRevertRequest,
     RunRevertResponse,
+    ProjectRunHistoryResponse,
+    ProjectRunHistoryItem,
+    ProjectRunHistoryTaskSummary,
+    ProjectRunRetryRequest,
+    ProjectRunRetryResponse,
 )
 from app.supervisor.run_snapshots import RunSnapshotManager
 from app.workspace.policy import WorkspacePolicy
@@ -7212,6 +7217,279 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         )
         await self.store.put(command)
         return result
+
+    async def list_project_run_history(
+        self,
+        *,
+        workspace_path: str,
+        status_filter: str = "all",
+        limit: int = 20,
+        offset: int = 0,
+    ) -> ProjectRunHistoryResponse:
+        clean_path = workspace_path.strip() if workspace_path else "."
+        if not clean_path:
+            clean_path = "."
+
+        try:
+            policy = WorkspacePolicy(
+                root=self.settings.workspace_root,
+                max_file_bytes=self.settings.workspace_max_file_bytes,
+                max_search_results=self.settings.workspace_max_search_results,
+            )
+            resolved = policy.resolve(clean_path, must_exist=False)
+            policy.ensure_not_sensitive(resolved)
+            try:
+                norm_ws_path = resolved.relative_to(self.settings.workspace_root).as_posix()
+            except ValueError:
+                norm_ws_path = "."
+            if norm_ws_path == "":
+                norm_ws_path = "."
+        except Exception as exc:
+            raise ValueError(f"Geçersiz veya engellenmiş proje yolu '{workspace_path}': {exc}") from exc
+
+        all_commands = await self.store.list()
+
+        project_commands = [
+            cmd for cmd in all_commands
+            if getattr(cmd, "project_run_preview_digest", None) is not None
+            and getattr(cmd, "project_run_workspace_path", None) is not None
+        ]
+
+        matching_commands = [
+            cmd for cmd in project_commands
+            if cmd.project_run_workspace_path == norm_ws_path or (
+                norm_ws_path == "." and (cmd.project_run_workspace_path in (".", ""))
+            )
+        ]
+
+        sf = status_filter.lower().strip()
+        filtered_commands: list[SupervisorCommand] = []
+
+        for cmd in matching_commands:
+            cmd_status = cmd.status
+            has_waiting_approval = any(
+                t.status == "awaiting_approval" or getattr(t, "approval_state", "idle") == "pending"
+                for t in cmd.tasks
+            )
+
+            if sf == "all":
+                filtered_commands.append(cmd)
+            elif sf == "active":
+                if cmd_status in ("planning", "ready", "running", "reviewing", "awaiting_approval") and cmd_status not in ("completed", "failed", "cancelled"):
+                    filtered_commands.append(cmd)
+            elif sf == "waiting_approval":
+                if cmd_status == "awaiting_approval" or has_waiting_approval:
+                    filtered_commands.append(cmd)
+            elif sf == "completed":
+                if cmd_status == "completed":
+                    filtered_commands.append(cmd)
+            elif sf == "failed":
+                if cmd_status == "failed":
+                    filtered_commands.append(cmd)
+            elif sf == "cancelled":
+                if cmd_status == "cancelled":
+                    filtered_commands.append(cmd)
+
+        def sort_key(c: SupervisorCommand):
+            created = c.created_at or ""
+            return (created, c.id)
+
+        filtered_commands.sort(key=sort_key, reverse=True)
+
+        total = len(filtered_commands)
+
+        limit_val = max(1, min(limit, 100))
+        offset_val = max(0, offset)
+        sliced_commands = filtered_commands[offset_val : offset_val + limit_val]
+
+        items: list[ProjectRunHistoryItem] = []
+        for cmd in sliced_commands:
+            changed_file_count = 0
+            try:
+                chg = self.snapshot_manager.build_command_change_review(
+                    command=cmd,
+                    workspace_root=self.settings.workspace_root,
+                    max_file_bytes=self.settings.workspace_max_file_bytes,
+                    max_search_results=self.settings.workspace_max_search_results,
+                )
+                changed_file_count = len([f for f in chg if f.change_type != "unchanged"])
+            except Exception:
+                pass
+
+            model_calls = 0
+            input_tokens = 0
+            output_tokens = 0
+            last_resp = getattr(cmd, "last_agent_response", None)
+            if last_resp:
+                model_calls = getattr(last_resp, "model_calls_used", 0)
+                input_tokens = getattr(last_resp, "input_tokens_used", 0)
+                output_tokens = getattr(last_resp, "output_tokens_used", 0)
+
+            last_event = cmd.events[-1].message if cmd.events else None
+
+            task_summaries: list[ProjectRunHistoryTaskSummary] = []
+            for t in cmd.tasks:
+                retry_available = True
+                retry_block_reason: str | None = None
+
+                if cmd.status == "running":
+                    retry_available = False
+                    retry_block_reason = "Command execution is active"
+                elif t.status == "running":
+                    retry_available = False
+                    retry_block_reason = "Task is currently running"
+                elif t.status == "completed":
+                    retry_available = False
+                    retry_block_reason = "Task completed successfully"
+                elif t.status not in ("failed", "rework_required", "blocked"):
+                    if t.status == "awaiting_approval" or getattr(t, "approval_state", "idle") == "pending":
+                        retry_available = True
+                        retry_block_reason = None
+                    else:
+                        retry_available = False
+                        retry_block_reason = f"Task status is '{t.status}'"
+
+                task_summaries.append(
+                    ProjectRunHistoryTaskSummary(
+                        task_id=t.id,
+                        title=t.title,
+                        status=t.status,
+                        approval_state=getattr(t, "approval_state", "idle"),
+                        attempts=t.attempts,
+                        exact_file_count=len(t.exact_files) if t.exact_files else 0,
+                        verification=t.verification or "",
+                        retry_available=retry_available,
+                        retry_block_reason=retry_block_reason,
+                    )
+                )
+
+            task_count = len(cmd.tasks)
+            completed_count = len([t for t in cmd.tasks if t.status == "completed"])
+            failed_count = len([t for t in cmd.tasks if t.status in ("failed", "rework_required")])
+            waiting_count = len([t for t in cmd.tasks if t.status == "awaiting_approval" or getattr(t, "approval_state", "idle") == "pending"])
+            progress = int((completed_count / task_count) * 100) if task_count > 0 else 0
+
+            items.append(
+                ProjectRunHistoryItem(
+                    command_id=cmd.id,
+                    goal=cmd.goal,
+                    workspace_path=cmd.project_run_workspace_path or norm_ws_path,
+                    status=cmd.status,
+                    created_at=cmd.created_at,
+                    updated_at=cmd.updated_at,
+                    task_count=task_count,
+                    completed_task_count=completed_count,
+                    failed_task_count=failed_count,
+                    waiting_approval_count=waiting_count,
+                    progress_percent=progress,
+                    changed_file_count=changed_file_count,
+                    model_calls=model_calls,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    last_event=last_event,
+                    tasks=task_summaries,
+                )
+            )
+
+        return ProjectRunHistoryResponse(
+            workspace_path=norm_ws_path,
+            status_filter=sf,
+            items=items,
+            total=total,
+            limit=limit_val,
+            offset=offset_val,
+        )
+
+    async def request_project_run_task_retry(
+        self,
+        *,
+        command_id: str,
+        task_id: str,
+        request: ProjectRunRetryRequest,
+    ) -> ProjectRunRetryResponse:
+        import uuid
+
+        command = await self.store.get(command_id)
+        if not command:
+            raise KeyError(f"Command '{command_id}' bulunamadı.")
+
+        if getattr(command, "project_run_preview_digest", None) is None:
+            raise ValueError(f"Command '{command_id}' bir Project Run komutu değil.")
+
+        task = next((t for t in command.tasks if t.id == task_id), None)
+        if not task:
+            raise KeyError(f"Task '{task_id}' command '{command_id}' içinde bulunamadı.")
+
+        if command.status == "running":
+            raise ValueError("Command üzerinde aktif execution çalışıyor, retry isteği oluşturulamaz.")
+
+        if task.status == "running":
+            raise ValueError(f"Task '{task_id}' şu anda çalışıyor, retry isteği oluşturulamaz.")
+
+        if task.status == "completed":
+            raise ValueError(f"Tamamlanmış task '{task_id}' retry edilemez.")
+
+        if getattr(task, "approval_state", "idle") == "pending" and getattr(task, "approval_id", None):
+            return ProjectRunRetryResponse(
+                command_id=command.id,
+                task_id=task.id,
+                approval_id=task.approval_id,
+                approval_version=task.approval_version,
+                approval_state="pending",
+                task_status=task.status,
+                execution_started=False,
+                model_calls=0,
+                total_tokens=0,
+            )
+
+        reason_text = (request.reason or "").strip()[:1000]
+        approval_id = f"appr_retry_{task.id}_{uuid.uuid4().hex[:8]}"
+        new_version = (getattr(task, "approval_version", 0) or 0) + 1
+        desc = f"Retry task '{task.title}'" + (f": {reason_text}" if reason_text else "")
+        preview = {
+            "exact_files": task.exact_files,
+            "verification": task.verification,
+            "attempts": task.attempts,
+            "reason": reason_text if reason_text else None,
+        }
+
+        task.approval_id = approval_id
+        task.approval_version = new_version
+        task.approval_state = "pending"
+        task.approval_description = desc
+        task.approval_preview = preview
+        task.status = "awaiting_approval"
+
+        if command.status not in ("completed", "failed"):
+            command.status = "awaiting_approval"
+
+        self._event(
+            command,
+            type="project_run_retry_requested",
+            message=f"Retry approval requested for task '{task.title}'",
+            task_id=task.id,
+            data={
+                "task_id": task.id,
+                "approval_id": approval_id,
+                "attempts": task.attempts,
+                "execution_started": False,
+                "model_calls": 0,
+                "total_tokens": 0,
+            },
+        )
+
+        await self.store.put(command)
+
+        return ProjectRunRetryResponse(
+            command_id=command.id,
+            task_id=task.id,
+            approval_id=approval_id,
+            approval_version=new_version,
+            approval_state="pending",
+            task_status=task.status,
+            model_calls=0,
+            total_tokens=0,
+        )
 
 
 

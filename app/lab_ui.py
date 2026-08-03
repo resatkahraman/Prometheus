@@ -527,6 +527,35 @@ LAB_UI = r"""<!doctype html>
                   </div>
                   <div id="workspaceProjectVerifications" style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#a5b4fc;"></div>
                 </div>
+              <!-- Run History Panel -->
+              <div id="projectRunHistory" style="display:none; background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:14px; margin-top:4px; display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                  <div>
+                    <strong style="font-size:14px; color:var(--accent-bright);">Run History</strong>
+                    <div id="projectRunHistoryStatus" style="font-size:12px; color:var(--text-dim);">Previous runs for selected project</div>
+                  </div>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <select id="projectRunHistoryFilter" onchange="loadProjectRunHistory({ reset: true })" style="background:rgba(0,0,0,0.4); border:1px solid var(--border); color:var(--text); padding:4px 8px; border-radius:6px; font-size:11px;">
+                      <option value="all">All</option>
+                      <option value="active">Active</option>
+                      <option value="waiting_approval">Waiting approval</option>
+                      <option value="completed">Completed</option>
+                      <option value="failed">Failed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                    <button class="btn btn-secondary" id="projectRunHistoryRefreshBtn" onclick="loadProjectRunHistory({ reset: true })" style="font-size:11px; padding:4px 8px;">
+                      <span>🔄</span>
+                      <span>Refresh</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div id="projectRunHistoryRetryStatus" style="font-size:12px; color:var(--accent-bright);"></div>
+                <div id="projectRunHistoryList" style="display:flex; flex-direction:column; gap:8px; max-height:280px; overflow:auto; padding-right:4px;"></div>
+                <div id="projectRunHistoryEmpty" style="display:none; font-size:12px; color:var(--text-dim); text-align:center; padding:10px;">No history records found for this project.</div>
+                <div style="display:flex; justify-content:center;">
+                  <button class="btn btn-secondary" id="projectRunHistoryLoadMoreBtn" onclick="loadProjectRunHistory({ reset: false })" style="display:none; font-size:11px; padding:4px 12px;">Load More</button>
+                </div>
               </div>
 
               <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px; align-items:center;">
@@ -1997,6 +2026,230 @@ window.fetch=(input,init={})=>{
         renderSelectedWorkspaceProject(data.project);
       } catch (err) {
         console.error("Proje seçilemedi:", err);
+      }
+    }
+
+    let projectRunHistoryItems = [];
+    let projectRunHistoryOffset = 0;
+    let projectRunHistoryTotal = 0;
+
+    async function loadProjectRunHistory({ reset = true } = {}) {
+      const panelEl = document.getElementById("projectRunHistory");
+      const statusEl = document.getElementById("projectRunHistoryStatus");
+      const filterEl = document.getElementById("projectRunHistoryFilter");
+      const loadMoreBtn = document.getElementById("projectRunHistoryLoadMoreBtn");
+
+      const wsPath = selectedWorkspaceProject ? selectedWorkspaceProject.workspace_path : (document.getElementById("projectRunWorkspace")?.value || ".");
+
+      if (!panelEl) return;
+      panelEl.style.display = "flex";
+
+      if (reset) {
+        projectRunHistoryOffset = 0;
+        projectRunHistoryItems = [];
+      }
+
+      const statusFilter = filterEl ? filterEl.value : "all";
+      if (statusEl) statusEl.textContent = "Yükleniyor...";
+
+      try {
+        const encodedPath = encodeURIComponent(wsPath);
+        const res = await fetch(`/v1/supervisor/project-runs?workspace_path=${encodedPath}&status=${statusFilter}&limit=20&offset=${projectRunHistoryOffset}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        projectRunHistoryTotal = data.total;
+        if (reset) {
+          projectRunHistoryItems = data.items || [];
+        } else {
+          projectRunHistoryItems = projectRunHistoryItems.concat(data.items || []);
+        }
+
+        if (statusEl) statusEl.textContent = `${data.total} run bulundu (${wsPath})`;
+
+        renderProjectRunHistory(projectRunHistoryItems);
+
+        if (loadMoreBtn) {
+          if (projectRunHistoryItems.length < data.total) {
+            loadMoreBtn.style.display = "block";
+            projectRunHistoryOffset = projectRunHistoryItems.length;
+          } else {
+            loadMoreBtn.style.display = "none";
+          }
+        }
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Geçmiş yükleme hatası";
+        console.error("Run History yüklenemedi:", err);
+      }
+    }
+
+    function renderProjectRunHistory(items) {
+      const listEl = document.getElementById("projectRunHistoryList");
+      const emptyEl = document.getElementById("projectRunHistoryEmpty");
+
+      if (!listEl) return;
+      listEl.textContent = "";
+
+      if (!items || items.length === 0) {
+        if (emptyEl) emptyEl.style.display = "block";
+        return;
+      }
+      if (emptyEl) emptyEl.style.display = "none";
+
+      items.forEach(item => {
+        const card = document.createElement("div");
+        card.style.background = "rgba(0,0,0,0.3)";
+        card.style.border = "1px solid var(--border)";
+        card.style.borderRadius = "6px";
+        card.style.padding = "10px 12px";
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.gap = "6px";
+
+        const headRow = document.createElement("div");
+        headRow.style.display = "flex";
+        headRow.style.justifyContent = "space-between";
+        headRow.style.alignItems = "center";
+
+        const goalSpan = document.createElement("span");
+        goalSpan.style.fontWeight = "600";
+        goalSpan.style.fontSize = "13px";
+        goalSpan.style.color = "var(--text)";
+        goalSpan.textContent = item.goal;
+        headRow.appendChild(goalSpan);
+
+        const statusBadge = document.createElement("span");
+        statusBadge.className = "badge";
+        statusBadge.style.fontSize = "11px";
+        statusBadge.style.padding = "2px 6px";
+        statusBadge.style.borderRadius = "4px";
+        if (item.status === "completed") {
+          statusBadge.style.background = "rgba(16,185,129,0.2)";
+          statusBadge.style.color = "#34d399";
+        } else if (item.status === "failed") {
+          statusBadge.style.background = "rgba(239,68,68,0.2)";
+          statusBadge.style.color = "#f87171";
+        } else if (item.status === "awaiting_approval") {
+          statusBadge.style.background = "rgba(245,158,11,0.2)";
+          statusBadge.style.color = "#fbbf24";
+        } else {
+          statusBadge.style.background = "rgba(59,130,246,0.2)";
+          statusBadge.style.color = "#60a5fa";
+        }
+        statusBadge.textContent = item.status;
+        headRow.appendChild(statusBadge);
+        card.appendChild(headRow);
+
+        const metaRow = document.createElement("div");
+        metaRow.style.display = "flex";
+        metaRow.style.gap = "12px";
+        metaRow.style.fontSize = "11px";
+        metaRow.style.color = "var(--text-dim)";
+        metaRow.style.flexWrap = "wrap";
+
+        const tasksStat = document.createElement("span");
+        tasksStat.textContent = `Tasks: ${item.completed_task_count}/${item.task_count} (${item.progress_percent}%)`;
+        metaRow.appendChild(tasksStat);
+
+        if (item.changed_file_count > 0) {
+          const filesStat = document.createElement("span");
+          filesStat.textContent = `Files: ${item.changed_file_count} changed`;
+          metaRow.appendChild(filesStat);
+        }
+
+        if (item.model_calls > 0) {
+          const callsStat = document.createElement("span");
+          callsStat.textContent = `Calls: ${item.model_calls}`;
+          metaRow.appendChild(callsStat);
+        }
+
+        if (item.created_at) {
+          const timeStat = document.createElement("span");
+          timeStat.textContent = `Time: ${new Date(item.created_at).toLocaleTimeString()}`;
+          metaRow.appendChild(timeStat);
+        }
+        card.appendChild(metaRow);
+
+        const actionRow = document.createElement("div");
+        actionRow.style.display = "flex";
+        actionRow.style.gap = "8px";
+        actionRow.style.justifyContent = "flex-end";
+        actionRow.style.marginTop = "4px";
+
+        const openBtn = document.createElement("button");
+        openBtn.className = "btn btn-secondary";
+        openBtn.style.fontSize = "11px";
+        openBtn.style.padding = "3px 8px";
+        openBtn.textContent = "Open Run";
+        openBtn.onclick = () => reopenProjectRun(item.command_id);
+        actionRow.appendChild(openBtn);
+
+        const failedTask = (item.tasks || []).find(t => t.retry_available && t.status !== "completed");
+        if (failedTask) {
+          const retryBtn = document.createElement("button");
+          retryBtn.className = "btn btn-primary";
+          retryBtn.style.fontSize = "11px";
+          retryBtn.style.padding = "3px 8px";
+          retryBtn.textContent = "Request Retry";
+          retryBtn.onclick = () => requestProjectRunTaskRetry(item.command_id, failedTask.task_id);
+          actionRow.appendChild(retryBtn);
+        }
+
+        card.appendChild(actionRow);
+        listEl.appendChild(card);
+      });
+    }
+
+    async function reopenProjectRun(commandId) {
+      try {
+        activeMissionId = commandId;
+        if (typeof renderLiveMission === "function") {
+          await renderLiveMission(commandId);
+        }
+        if (typeof connectMissionStream === "function") {
+          connectMissionStream(commandId);
+        }
+        if (typeof loadProjectRunChangeReview === "function") {
+          await loadProjectRunChangeReview(commandId);
+        }
+        const navMissionBtn = document.getElementById("navLiveMission");
+        if (navMissionBtn) navMissionBtn.click();
+      } catch (err) {
+        console.error("Run açılamadı:", err);
+      }
+    }
+
+    async function requestProjectRunTaskRetry(commandId, taskId) {
+      const retryStatus = document.getElementById("projectRunHistoryRetryStatus");
+      const reason = prompt("Retry için isteğe bağlı açıklama yazabilirsiniz:");
+
+      if (retryStatus) retryStatus.textContent = "Retry isteği gönderiliyor...";
+
+      try {
+        const res = await fetch(`/v1/supervisor/commands/${commandId}/tasks/${taskId}/retry-request`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Prometheus-CSRF": "1"
+          },
+          body: JSON.stringify({ reason: reason || null })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.detail || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        if (retryStatus) {
+          retryStatus.textContent = "Retry approval requested (Execution has not started).";
+        }
+
+        await reopenProjectRun(commandId);
+      } catch (err) {
+        if (retryStatus) retryStatus.textContent = `Retry hatası: ${err.message}`;
+        alert(`Retry İsteği Hatası: ${err.message}`);
       }
     }
 
