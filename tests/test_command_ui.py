@@ -26,4 +26,12 @@ def test_project_run_console_ui_elements_in_lab_ui():
     assert 'id="projectRunApprovalGate"' in LAB_UI
     assert "previewProjectRun()" in LAB_UI
     assert "renderProjectRunPreview(" in LAB_UI
+    assert 'id="projectRunCommitBtn"' in LAB_UI
+    assert 'id="projectRunCommitStatus"' in LAB_UI
+    assert 'id="projectRunCommittedCommand"' in LAB_UI
+    assert "latestProjectRunPreview" in LAB_UI
+    assert "commitProjectRun()" in LAB_UI
+    assert "/v1/supervisor/project-run/commit" in LAB_UI
+    assert "Create Run for Approval" in LAB_UI
+
 

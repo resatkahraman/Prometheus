@@ -60,6 +60,8 @@ from app.core.schemas import (
     SupervisorApprovalRequest,
     ProjectRunPreviewRequest,
     ProjectRunPreviewResponse,
+    ProjectRunCommitRequest,
+    ProjectRunCommitResponse,
 )
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.routes import RouteCatalog
@@ -835,6 +837,25 @@ async def preview_project_run(
         return await app.state.supervisor.preview_project_run(payload)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/supervisor/project-run/commit",
+    response_model=ProjectRunCommitResponse,
+    tags=["supervisor"],
+)
+async def commit_project_run(
+    payload: ProjectRunCommitRequest,
+) -> ProjectRunCommitResponse:
+    try:
+        return await app.state.supervisor.commit_project_run(payload)
+    except ValueError as exc:
+        err_msg = str(exc)
+        if "stale_project_run_preview" in err_msg or "aktif bir görev/komut çalışıyor" in err_msg:
+            raise HTTPException(status_code=409, detail=err_msg) from exc
+        raise HTTPException(status_code=422, detail=err_msg) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

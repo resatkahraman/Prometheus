@@ -197,6 +197,8 @@ class SupervisorCommand(BaseModel):
     failure_reason: str | None = None
     archived: bool = False
     archived_at: str | None = None
+    project_run_preview_digest: str | None = None
+    project_run_workspace_path: str | None = None
 
     active_operation: str | None = None
     operation_phase: str | None = None

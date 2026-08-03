@@ -545,6 +545,18 @@ LAB_UI = r"""<!doctype html>
                   <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Uyarılar:</strong>
                   <div id="projectRunWarnings" style="font-size:12px; color:#fca5a5; background:rgba(239,68,68,0.1); padding:8px; border-radius:6px;"></div>
                 </div>
+
+                <!-- Commit Button & Status Bar -->
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; border-top:1px solid var(--border); padding-top:12px;">
+                  <div id="projectRunCommitStatus" style="font-size:12px; color:var(--text-dim);"></div>
+                  <button class="btn btn-primary" id="projectRunCommitBtn" onclick="commitProjectRun()" disabled style="background:linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    <span>⚡</span>
+                    <span>Create Run for Approval</span>
+                  </button>
+                </div>
+
+                <!-- Committed Command Output Card -->
+                <div id="projectRunCommittedCommand" style="display:none; font-size:12px; color:var(--text-dim); background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); padding:10px; border-radius:6px; font-family:'JetBrains Mono', monospace;"></div>
               </div>
             </div>
           </div>
@@ -1500,7 +1512,10 @@ window.fetch=(input,init={})=>{
       }
     }
 
+    let latestProjectRunPreview = null;
+
     function renderProjectRunPreview(preview) {
+      latestProjectRunPreview = preview;
       const card = document.getElementById('projectRunPreviewCard');
       const tasksEl = document.getElementById('projectRunPreviewTasks');
       const exactFilesEl = document.getElementById('projectRunExactFiles');
@@ -1508,9 +1523,14 @@ window.fetch=(input,init={})=>{
       const warningsEl = document.getElementById('projectRunWarnings');
       const usageEl = document.getElementById('projectRunUsage');
       const gateEl = document.getElementById('projectRunApprovalGate');
+      const commitBtn = document.getElementById('projectRunCommitBtn');
 
       if (!preview || !card) return;
       card.style.display = 'flex';
+
+      if (commitBtn) {
+        commitBtn.disabled = !(preview.preview_digest && preview.preview_digest.startsWith('sha256:'));
+      }
 
       if (gateEl) {
         gateEl.innerText = preview.requires_approval
@@ -1553,9 +1573,101 @@ window.fetch=(input,init={})=>{
     }
 
     function clearProjectRunPreview() {
+      latestProjectRunPreview = null;
       const card = document.getElementById('projectRunPreviewCard');
+      const commitBtn = document.getElementById('projectRunCommitBtn');
+      const outputCard = document.getElementById('projectRunCommittedCommand');
       if (card) card.style.display = 'none';
+      if (commitBtn) commitBtn.disabled = true;
+      if (outputCard) outputCard.style.display = 'none';
     }
+
+    async function commitProjectRun() {
+      const workspaceInput = document.getElementById('projectRunWorkspace');
+      const goalInput = document.getElementById('projectRunGoal');
+      const commitBtn = document.getElementById('projectRunCommitBtn');
+      const statusEl = document.getElementById('projectRunCommitStatus');
+      const outputCard = document.getElementById('projectRunCommittedCommand');
+
+      if (!latestProjectRunPreview || !latestProjectRunPreview.preview_digest) {
+        if (statusEl) {
+          statusEl.innerText = 'Önce geçerli bir önizleme (Preview Run) oluşturun.';
+          statusEl.style.color = '#fca5a5';
+        }
+        return;
+      }
+
+      const goal = goalInput ? goalInput.value.trim() : '';
+      const workspace_path = workspaceInput ? workspaceInput.value.trim() || '.' : '.';
+
+      if (commitBtn) {
+        commitBtn.disabled = true;
+        commitBtn.innerText = 'Oluşturuluyor...';
+      }
+      if (statusEl) {
+        statusEl.innerText = 'Project Run oluşturuluyor...';
+        statusEl.style.color = 'var(--text-dim)';
+      }
+
+      try {
+        const res = await fetch('/v1/supervisor/project-run/commit', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-Prometheus-CSRF': '1'
+          },
+          body: JSON.stringify({
+            goal: goal,
+            workspace_path: workspace_path,
+            preview_digest: latestProjectRunPreview.preview_digest,
+            autonomy_mode: 'task',
+            background: true,
+            force_new: false
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          if (res.status === 409) {
+            clearProjectRunPreview();
+          }
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+
+        if (statusEl) {
+          statusEl.innerText = data.created ? 'Project Run onay bekliyor' : 'Mevcut Project Run yüklendi';
+          statusEl.style.color = '#34d399';
+        }
+
+        if (outputCard) {
+          outputCard.style.display = 'block';
+          outputCard.textContent = `Command ID: ${data.command_id} | Status: ${data.status} | Execution has not started | Model calls: ${data.model_calls} | Tokens: ${data.total_tokens}`;
+        }
+
+        if (typeof openTask === 'function') {
+          await openTask(data.command_id);
+        } else if (typeof renderLiveMission === 'function') {
+          await renderLiveMission(data.command_id);
+          if (typeof connectMissionStream === 'function') {
+            connectMissionStream(data.command_id);
+          }
+        }
+      } catch (err) {
+        if (statusEl) {
+          statusEl.innerText = 'Hata: ' + (err.message || 'Project Run oluşturulamadı');
+          statusEl.style.color = '#fca5a5';
+        }
+      } finally {
+        if (commitBtn) {
+          commitBtn.disabled = !latestProjectRunPreview;
+          commitBtn.innerHTML = '<span>⚡</span><span>Create Run for Approval</span>';
+        }
+      }
+    }
+
+    document.getElementById('projectRunWorkspace')?.addEventListener('input', clearProjectRunPreview);
+    document.getElementById('projectRunGoal')?.addEventListener('input', clearProjectRunPreview);
 
 
     // Keydown shortcut

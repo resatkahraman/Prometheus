@@ -417,4 +417,43 @@ class ProjectRunPreviewResponse(BaseModel):
     model_calls: int = 0
     total_tokens: int = 0
     side_effect_free: bool = True
+    preview_digest: str = ""
+
+
+class ProjectRunCommitRequest(BaseModel):
+    goal: str = Field(min_length=3, max_length=4000)
+    workspace_path: str = Field(default=".", max_length=1000)
+    preview_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    autonomy_mode: AutonomyMode = "task"
+    background: bool = True
+    force_new: bool = False
+
+    @model_validator(mode="after")
+    def validate_commit_fields(self):
+        stripped_goal = self.goal.strip()
+        if not stripped_goal or len(stripped_goal) < 3:
+            raise ValueError("Görev açıklaması boş olamaz ve en az 3 karakter olmalıdır.")
+        self.goal = stripped_goal
+
+        stripped_path = self.workspace_path.strip() if self.workspace_path else "."
+        if not stripped_path:
+            stripped_path = "."
+        self.workspace_path = stripped_path
+        return self
+
+
+class ProjectRunCommitResponse(BaseModel):
+    command_id: str
+    status: str
+    goal: str
+    workspace_path: str
+    preview_digest: str
+    task_ids: list[str]
+    approval_ids: list[str]
+    requires_approval: bool = True
+    model_calls: int = 0
+    total_tokens: int = 0
+    execution_started: bool = False
+    created: bool
+
 

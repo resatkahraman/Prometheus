@@ -23,6 +23,8 @@ from app.core.schemas import (
     ProjectRunPreviewRequest,
     ProjectRunPreviewResponse,
     ProjectRunPreviewTask,
+    ProjectRunCommitRequest,
+    ProjectRunCommitResponse,
 )
 from app.workspace.policy import WorkspacePolicy
 from app.tools.base import ToolError
@@ -6901,7 +6903,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             "Exact user approval will be required before any execution."
         )
 
-        return ProjectRunPreviewResponse(
+        res = ProjectRunPreviewResponse(
             goal=request.goal,
             workspace_path=rel_path if rel_path else ".",
             tasks=preview_tasks,
@@ -6913,4 +6915,177 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             total_tokens=0,
             side_effect_free=True,
         )
+        res.preview_digest = self._project_run_preview_digest(res)
+        return res
+
+    def _project_run_preview_digest(
+        self,
+        preview: ProjectRunPreviewResponse,
+    ) -> str:
+        tasks_data = [
+            {
+                "title": t.title,
+                "assigned_agent": t.assigned_agent,
+                "exact_files": list(t.exact_files),
+                "verification": t.verification,
+                "acceptance_criteria": list(t.acceptance_criteria),
+            }
+            for t in preview.tasks
+        ]
+        authoritative_payload = {
+            "goal": preview.goal,
+            "workspace_path": preview.workspace_path,
+            "tasks": tasks_data,
+            "exact_files": list(preview.exact_files),
+            "verification_commands": list(preview.verification_commands),
+            "requires_approval": preview.requires_approval,
+            "side_effect_free": preview.side_effect_free,
+        }
+        canonical_json = json.dumps(
+            authoritative_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        digest_hex = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+        return f"sha256:{digest_hex}"
+
+    async def _active_command(self) -> SupervisorCommand | None:
+        commands = await self.store.list()
+        terminal_statuses = {"completed", "failed", "cancelled", "archived"}
+        for cmd in commands:
+            if getattr(cmd, "archived", False):
+                continue
+            if cmd.status not in terminal_statuses:
+                return cmd
+        return None
+
+    async def commit_project_run(
+        self,
+        request: ProjectRunCommitRequest,
+    ) -> ProjectRunCommitResponse:
+        preview_req = ProjectRunPreviewRequest(
+            goal=request.goal,
+            workspace_path=request.workspace_path,
+        )
+        preview = await self.preview_project_run(preview_req)
+
+        if request.preview_digest != preview.preview_digest:
+            raise ValueError(
+                "Stale veya değiştirilmiş preview digest: stale_project_run_preview"
+            )
+
+        commands = await self.store.list()
+        for cmd in commands:
+            if getattr(cmd, "archived", False):
+                continue
+            if (
+                getattr(cmd, "project_run_preview_digest", None) == preview.preview_digest
+                and getattr(cmd, "project_run_workspace_path", None) == preview.workspace_path
+                and cmd.goal == preview.goal
+            ):
+                task_ids = [t.id for t in cmd.tasks]
+                approval_ids = [t.approval_id for t in cmd.tasks if t.approval_id]
+                return ProjectRunCommitResponse(
+                    command_id=cmd.id,
+                    status=cmd.status,
+                    goal=cmd.goal,
+                    workspace_path=preview.workspace_path,
+                    preview_digest=preview.preview_digest,
+                    task_ids=task_ids,
+                    approval_ids=approval_ids,
+                    requires_approval=True,
+                    model_calls=0,
+                    total_tokens=0,
+                    execution_started=False,
+                    created=False,
+                )
+
+        active = await self._active_command()
+        if active is not None:
+            raise ValueError("Zaten aktif bir görev/komut çalışıyor.")
+
+        cmd_id = f"cmd_{secrets.token_hex(6)}"
+        tasks: list[SupervisorTask] = []
+        task_ids: list[str] = []
+        approval_ids: list[str] = []
+
+        for pt in preview.tasks:
+            t_id = f"task_{secrets.token_hex(6)}"
+            appr_id = f"appr_{secrets.token_hex(6)}"
+
+            appr_preview_dict = {
+                "task_title": pt.title,
+                "exact_files": pt.exact_files,
+                "verification": pt.verification,
+                "workspace_path": preview.workspace_path,
+            }
+
+            task = SupervisorTask(
+                id=t_id,
+                title=pt.title,
+                priority="zorunlu",
+                assigned_agent=pt.assigned_agent,
+                evidence=[{"type": "file", "value": f} for f in pt.exact_files],
+                acceptance_criteria=pt.acceptance_criteria,
+                dependencies=[],
+                dependency_reason="Bağımsız görev adımı",
+                parallelizable="evet",
+                verification=pt.verification,
+                user_approval="gerekli",
+                exact_files=pt.exact_files,
+                status="blocked",
+                approval_id=appr_id,
+                approval_state="pending",
+                approval_description=f"Project Run adımı onay bekliyor: {pt.title}",
+                approval_preview=appr_preview_dict,
+            )
+            tasks.append(task)
+            task_ids.append(t_id)
+            approval_ids.append(appr_id)
+
+        command = SupervisorCommand(
+            id=cmd_id,
+            goal=preview.goal,
+            status="awaiting_approval",
+            autonomy_mode=request.autonomy_mode,
+            plan_text=f"Project Run Plan: {len(preview.tasks)} adımlı deterministik plan",
+            tasks=tasks,
+            execution_layers=[task_ids],
+            project_run_preview_digest=preview.preview_digest,
+            project_run_workspace_path=preview.workspace_path,
+        )
+
+        self._event(
+            command,
+            type="project_run_committed",
+            message=f"Project Run {len(tasks)} adımlı plan onay bekliyor.",
+            data={
+                "preview_digest": preview.preview_digest,
+                "workspace_path": preview.workspace_path,
+                "task_count": len(tasks),
+                "requires_approval": True,
+                "execution_started": False,
+                "model_calls": 0,
+                "total_tokens": 0,
+            },
+        )
+
+        await self.store.put(command)
+
+        return ProjectRunCommitResponse(
+            command_id=cmd_id,
+            status=command.status,
+            goal=command.goal,
+            workspace_path=preview.workspace_path,
+            preview_digest=preview.preview_digest,
+            task_ids=task_ids,
+            approval_ids=approval_ids,
+            requires_approval=True,
+            model_calls=0,
+            total_tokens=0,
+            execution_started=False,
+            created=True,
+        )
+
 
