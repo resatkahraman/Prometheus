@@ -493,6 +493,42 @@ LAB_UI = r"""<!doctype html>
               <div id="projectRunPreviewStatus" style="font-size:12px; color:var(--text-dim);"></div>
             </div>
             <div class="card-body" style="display:flex; flex-direction:column; gap:14px;">
+              <!-- Project Workspace Manager Panel -->
+              <div id="workspaceProjectsPanel" style="background:rgba(0,0,0,0.2); border:1px solid var(--border); border-radius:8px; padding:14px; display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <strong style="font-size:14px; color:var(--accent-bright);">Projects</strong>
+                    <div style="font-size:12px; color:var(--text-dim);">Choose a project inside the configured workspace.</div>
+                  </div>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <div id="workspaceProjectsStatus" style="font-size:12px; color:var(--text-dim);"></div>
+                    <button class="btn btn-secondary" id="workspaceProjectsRefreshBtn" onclick="loadWorkspaceProjects()" style="font-size:11px; padding:4px 8px;">
+                      <span>🔄</span>
+                      <span>Refresh Projects</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div id="workspaceProjectsList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:8px; max-height:160px; overflow:auto; padding-right:4px;"></div>
+                <div id="workspaceProjectsEmpty" style="display:none; font-size:12px; color:var(--text-dim); text-align:center; padding:10px;">No candidate projects found.</div>
+
+                <!-- Selected Project Details -->
+                <div id="workspaceProjectDetails" style="display:none; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:6px; padding:10px; font-size:12px; flex-direction:column; gap:6px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      <span id="workspaceProjectName" style="font-weight:700; color:var(--text);"></span>
+                      <span id="workspaceProjectSelectedBadge" class="badge" style="background:rgba(16,185,129,0.2); color:#34d399;">Selected</span>
+                    </div>
+                    <span id="workspaceProjectPath" style="font-family:'JetBrains Mono', monospace; color:var(--text-dim);"></span>
+                  </div>
+                  <div style="display:flex; gap:12px; font-size:11px;">
+                    <div id="workspaceProjectTypes" style="display:flex; gap:4px;"></div>
+                    <div id="workspaceProjectGit" style="color:var(--text-dim);"></div>
+                  </div>
+                  <div id="workspaceProjectVerifications" style="font-family:'JetBrains Mono', monospace; font-size:11px; color:#a5b4fc;"></div>
+                </div>
+              </div>
+
               <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px; align-items:center;">
                 <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Workspace Path:</label>
                 <input type="text" id="projectRunWorkspace" value="." style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-family:'JetBrains Mono', monospace; font-size:13px;" />
@@ -1834,7 +1870,187 @@ window.fetch=(input,init={})=>{
       }
     }
 
-    document.getElementById('projectRunWorkspace')?.addEventListener('input', clearProjectRunPreview);
+    let workspaceProjects = [];
+    let selectedWorkspaceProject = null;
+
+    async function loadWorkspaceProjects() {
+      const statusEl = document.getElementById("workspaceProjectsStatus");
+      const emptyEl = document.getElementById("workspaceProjectsEmpty");
+
+      if (statusEl) statusEl.textContent = "Taranıyor...";
+
+      try {
+        const res = await fetch("/v1/workspace/projects");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        workspaceProjects = data.projects || [];
+        if (statusEl) statusEl.textContent = `${data.total} proje bulundu`;
+        renderWorkspaceProjects(workspaceProjects);
+      } catch (err) {
+        if (statusEl) statusEl.textContent = "Tarama hatası";
+        console.error("Workspace projeleri yüklenemedi:", err);
+      }
+    }
+
+    function renderWorkspaceProjects(projects) {
+      const listEl = document.getElementById("workspaceProjectsList");
+      const emptyEl = document.getElementById("workspaceProjectsEmpty");
+
+      if (!listEl) return;
+      listEl.textContent = "";
+
+      if (!projects || projects.length === 0) {
+        if (emptyEl) emptyEl.style.display = "block";
+        return;
+      }
+      if (emptyEl) emptyEl.style.display = "none";
+
+      projects.forEach(p => {
+        const card = document.createElement("div");
+        card.style.background = "rgba(255,255,255,0.04)";
+        card.style.border = "1px solid var(--border)";
+        card.style.borderRadius = "6px";
+        card.style.padding = "8px 10px";
+        card.style.cursor = "pointer";
+        card.style.display = "flex";
+        card.style.flexDirection = "column";
+        card.style.gap = "4px";
+
+        card.onclick = () => selectWorkspaceProject(p.workspace_path);
+
+        const titleRow = document.createElement("div");
+        titleRow.style.display = "flex";
+        titleRow.style.justifyContent = "space-between";
+        titleRow.style.alignItems = "center";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.style.fontWeight = "600";
+        nameSpan.style.fontSize = "12px";
+        nameSpan.style.color = "var(--text)";
+        nameSpan.textContent = p.name;
+        titleRow.appendChild(nameSpan);
+
+        if (p.recent_rank !== null && p.recent_rank !== undefined) {
+          const recentBadge = document.createElement("span");
+          recentBadge.style.fontSize = "10px";
+          recentBadge.style.background = "rgba(59,130,246,0.2)";
+          recentBadge.style.color = "#60a5fa";
+          recentBadge.style.padding = "1px 4px";
+          recentBadge.style.borderRadius = "4px";
+          recentBadge.textContent = "Recent";
+          titleRow.appendChild(recentBadge);
+        }
+        card.appendChild(titleRow);
+
+        const pathSpan = document.createElement("span");
+        pathSpan.style.fontSize = "11px";
+        pathSpan.style.fontFamily = "'JetBrains Mono', monospace";
+        pathSpan.style.color = "var(--text-dim)";
+        pathSpan.textContent = p.workspace_path;
+        card.appendChild(pathSpan);
+
+        const typesRow = document.createElement("div");
+        typesRow.style.display = "flex";
+        typesRow.style.gap = "4px";
+        typesRow.style.flexWrap = "wrap";
+        (p.project_types || []).forEach(t => {
+          const typeTag = document.createElement("span");
+          typeTag.style.fontSize = "10px";
+          typeTag.style.background = "rgba(255,255,255,0.06)";
+          typeTag.style.padding = "1px 4px";
+          typeTag.style.borderRadius = "3px";
+          typeTag.style.color = "var(--text-dim)";
+          typeTag.textContent = t;
+          typesRow.appendChild(typeTag);
+        });
+        card.appendChild(typesRow);
+
+        listEl.appendChild(card);
+      });
+    }
+
+    async function selectWorkspaceProject(workspacePath) {
+      try {
+        const res = await fetch("/v1/workspace/projects/select", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Requested-With": "XMLHttpRequest",
+            "X-Prometheus-CSRF": "1"
+          },
+          body: JSON.stringify({ workspace_path: workspacePath })
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        selectedWorkspaceProject = data.project;
+
+        const wsInput = document.getElementById("projectRunWorkspace");
+        if (wsInput) {
+          wsInput.value = data.project.workspace_path;
+        }
+
+        if (typeof clearProjectRunPreview === "function") {
+          clearProjectRunPreview();
+        }
+
+        renderSelectedWorkspaceProject(data.project);
+      } catch (err) {
+        console.error("Proje seçilemedi:", err);
+      }
+    }
+
+    function renderSelectedWorkspaceProject(project) {
+      const detailsEl = document.getElementById("workspaceProjectDetails");
+      if (!detailsEl || !project) return;
+
+      detailsEl.style.display = "flex";
+
+      const nameEl = document.getElementById("workspaceProjectName");
+      if (nameEl) nameEl.textContent = project.name;
+
+      const pathEl = document.getElementById("workspaceProjectPath");
+      if (pathEl) pathEl.textContent = project.workspace_path;
+
+      const typesEl = document.getElementById("workspaceProjectTypes");
+      if (typesEl) {
+        typesEl.textContent = "";
+        (project.project_types || []).forEach(t => {
+          const tag = document.createElement("span");
+          tag.style.background = "rgba(16,185,129,0.15)";
+          tag.style.color = "#34d399";
+          tag.style.padding = "2px 6px";
+          tag.style.borderRadius = "4px";
+          tag.textContent = t;
+          typesEl.appendChild(tag);
+        });
+      }
+
+      const gitEl = document.getElementById("workspaceProjectGit");
+      if (gitEl) {
+        if (project.git && project.git.is_repository) {
+          const dirtyStr = project.git.dirty ? `(${project.git.changed_file_count} changed)` : "clean";
+          gitEl.textContent = `Git: ${project.git.branch || 'HEAD'} · ${dirtyStr}`;
+        } else {
+          gitEl.textContent = "Git: Not a repository";
+        }
+      }
+
+      const verifEl = document.getElementById("workspaceProjectVerifications");
+      if (verifEl) {
+        if (project.suggested_verifications && project.suggested_verifications.length > 0) {
+          verifEl.textContent = "Suggested: " + project.suggested_verifications.join(" | ");
+        } else {
+          verifEl.textContent = "";
+        }
+      }
+    }
+
+    document.getElementById('projectRunWorkspace')?.addEventListener('input', () => {
+      if (typeof clearProjectRunPreview === 'function') clearProjectRunPreview();
+      const badge = document.getElementById("workspaceProjectSelectedBadge");
+      if (badge) badge.style.display = "none";
+    });
     document.getElementById('projectRunGoal')?.addEventListener('input', clearProjectRunPreview);
 
 
@@ -1847,6 +2063,7 @@ window.fetch=(input,init={})=>{
 
     // İlk yükleme
     loadTasks();
+    loadWorkspaceProjects();
     if (activeMissionId) {
       openTask(activeMissionId);
       loadProjectRunChangeReview(activeMissionId);

@@ -65,7 +65,11 @@ from app.core.schemas import (
     RunChangeReviewResponse,
     RunRevertRequest,
     RunRevertResponse,
+    WorkspaceProjectsResponse,
+    WorkspaceProjectSelectRequest,
+    WorkspaceProjectSelectResponse,
 )
+from app.workspace.projects import WorkspaceProjectManager
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.routes import RouteCatalog
 from app.providers.registry import ProviderRegistry
@@ -144,6 +148,7 @@ async def lifespan(app: FastAPI):
     app.state.agents = agents
     app.state.agent = agent
     app.state.supervisor = supervisor
+    app.state.workspace_projects = WorkspaceProjectManager(settings.workspace_root)
     app.state.improvement = supervisor.improvement
     app.state.forge = supervisor.forge
     app.state.arena_recovery_executor = ArenaRecoveryExecutor(
@@ -901,6 +906,37 @@ async def revert_supervisor_command_changes(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/workspace/projects",
+    response_model=WorkspaceProjectsResponse,
+    tags=["workspace"],
+)
+async def list_workspace_projects() -> WorkspaceProjectsResponse:
+    try:
+        manager: WorkspaceProjectManager = app.state.workspace_projects
+        return manager.list_projects()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/workspace/projects/select",
+    response_model=WorkspaceProjectSelectResponse,
+    tags=["workspace"],
+)
+async def select_workspace_project(
+    payload: WorkspaceProjectSelectRequest,
+) -> WorkspaceProjectSelectResponse:
+    try:
+        manager: WorkspaceProjectManager = app.state.workspace_projects
+        return manager.select_project(payload.workspace_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 
 

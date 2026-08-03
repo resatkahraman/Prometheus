@@ -498,4 +498,42 @@ class RunRevertResponse(BaseModel):
     event_recorded: bool = True
 
 
+class WorkspaceProjectGitStatus(BaseModel):
+    is_repository: bool = False
+    git_root: str | None = None
+    branch: str | None = None
+    dirty: bool = False
+    changed_file_count: int = 0
+    ahead: int | None = None
+    behind: int | None = None
+
+
+class WorkspaceProjectSummary(BaseModel):
+    name: str
+    workspace_path: str
+    project_types: list[str] = Field(default_factory=list)
+    manifests: list[str] = Field(default_factory=list)
+    suggested_verifications: list[str] = Field(default_factory=list)
+    git: WorkspaceProjectGitStatus = Field(default_factory=WorkspaceProjectGitStatus)
+    recent_rank: int | None = None
+
+
+class WorkspaceProjectsResponse(BaseModel):
+    workspace_root_name: str
+    projects: list[WorkspaceProjectSummary] = Field(default_factory=list)
+    total: int = 0
+    scan_depth: int = 2
+    truncated: bool = False
+
+
+class WorkspaceProjectSelectRequest(BaseModel):
+    workspace_path: str
+
+
+class WorkspaceProjectSelectResponse(BaseModel):
+    project: WorkspaceProjectSummary
+    selected: bool = True
+
+
+
 
