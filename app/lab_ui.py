@@ -478,6 +478,77 @@ LAB_UI = r"""<!doctype html>
             </div>
           </div>
 
+          <!-- Project Run Console -->
+          <div class="card" id="projectRunConsoleCard" style="border: 1px solid var(--accent-glow);">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title">
+                  <span>🎯</span>
+                  <span>Project Run Console</span>
+                </h2>
+                <div style="font-size:12px; color:var(--text-dim); margin-top:4px;">
+                  Preview is deterministic and does not call a model or change files.
+                </div>
+              </div>
+              <div id="projectRunPreviewStatus" style="font-size:12px; color:var(--text-dim);"></div>
+            </div>
+            <div class="card-body" style="display:flex; flex-direction:column; gap:14px;">
+              <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px; align-items:center;">
+                <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Workspace Path:</label>
+                <input type="text" id="projectRunWorkspace" value="." style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-family:'JetBrains Mono', monospace; font-size:13px;" />
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Natural Language Goal:</label>
+                <textarea id="projectRunGoal" placeholder="Proje hedefini doğal dille açıkla..." style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:8px; min-height:70px; font-family:inherit; font-size:13px; resize:vertical;"></textarea>
+              </div>
+              <div style="display:flex; justify-content:flex-end;">
+                <button class="btn btn-primary" id="projectRunPreviewBtn" onclick="previewProjectRun()">
+                  <span>🔍</span>
+                  <span>Preview Run</span>
+                </button>
+              </div>
+
+              <!-- Preview Result Container -->
+              <div id="projectRunPreviewCard" style="display:none; background:rgba(0,0,0,0.25); border:1px solid var(--border); border-radius:8px; padding:16px; margin-top:10px; flex-direction:column; gap:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px;">
+                  <span style="font-weight:700; color:var(--accent-bright); font-size:14px;">Deterministik Plan Önizlemesi</span>
+                  <div style="display:flex; gap:8px;">
+                    <span class="badge" style="background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3);">Preview only — no files changed</span>
+                  </div>
+                </div>
+
+                <div id="projectRunApprovalGate" style="font-size:12px; color:#fde68a; font-weight:600; padding:8px; background:rgba(245,158,11,0.1); border-radius:6px; border:1px solid rgba(245,158,11,0.2);">
+                  Exact approval required before execution
+                </div>
+
+                <div id="projectRunUsage" style="font-size:12px; color:var(--text-dim); font-family:'JetBrains Mono', monospace; display:flex; gap:16px;">
+                  <span>Model calls: 0</span>
+                  <span>Total tokens: 0</span>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Görev Adımları:</strong>
+                  <div id="projectRunPreviewTasks" style="display:flex; flex-direction:column; gap:8px;"></div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Exact File Scope:</strong>
+                  <div id="projectRunExactFiles" style="font-family:'JetBrains Mono', monospace; font-size:12px; color:var(--text); background:rgba(0,0,0,0.3); padding:8px; border-radius:6px; max-height:100px; overflow:auto;"></div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Verification Komutları:</strong>
+                  <div id="projectRunVerifications" style="font-family:'JetBrains Mono', monospace; font-size:12px; color:#a5b4fc; background:rgba(0,0,0,0.3); padding:8px; border-radius:6px; max-height:100px; overflow:auto;"></div>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                  <strong style="font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Uyarılar:</strong>
+                  <div id="projectRunWarnings" style="font-size:12px; color:#fca5a5; background:rgba(239,68,68,0.1); padding:8px; border-radius:6px;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Active Mission Control (Integrated Live Command Inspector) -->
           <div id="liveMissionControl" class="card" style="display:none; border: 1px solid var(--accent); background: rgba(18,22,29,0.95);">
             <div class="card-header" style="flex-wrap:wrap; gap:10px;">
@@ -1371,6 +1442,121 @@ window.fetch=(input,init={})=>{
         openTask(activeId);
       }
     }
+
+    async function previewProjectRun() {
+      const workspaceInput = document.getElementById('projectRunWorkspace');
+      const goalInput = document.getElementById('projectRunGoal');
+      const btn = document.getElementById('projectRunPreviewBtn');
+      const statusEl = document.getElementById('projectRunPreviewStatus');
+      
+      const goal = goalInput ? goalInput.value.trim() : '';
+      const workspace_path = workspaceInput ? workspaceInput.value.trim() || '.' : '.';
+
+      if (!goal || goal.length < 3) {
+        if (statusEl) {
+          statusEl.innerText = 'Lütfen en az 3 karakterli bir görev açıklaması girin.';
+          statusEl.style.color = '#fca5a5';
+        }
+        return;
+      }
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Hazırlanıyor...';
+      }
+      if (statusEl) {
+        statusEl.innerText = 'Deterministik önizleme oluşturuluyor...';
+        statusEl.style.color = 'var(--text-dim)';
+      }
+
+      try {
+        const res = await fetch('/v1/supervisor/project-run/preview', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ goal, workspace_path })
+        });
+        
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || `HTTP ${res.status}`);
+        }
+
+        renderProjectRunPreview(data);
+        if (statusEl) {
+          statusEl.innerText = 'Önizleme hazır';
+          statusEl.style.color = '#34d399';
+        }
+      } catch (err) {
+        clearProjectRunPreview();
+        if (statusEl) {
+          statusEl.innerText = 'Hata: ' + (err.message || 'Önizleme oluşturulamadı');
+          statusEl.style.color = '#fca5a5';
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '<span>🔍</span><span>Preview Run</span>';
+        }
+      }
+    }
+
+    function renderProjectRunPreview(preview) {
+      const card = document.getElementById('projectRunPreviewCard');
+      const tasksEl = document.getElementById('projectRunPreviewTasks');
+      const exactFilesEl = document.getElementById('projectRunExactFiles');
+      const verificationsEl = document.getElementById('projectRunVerifications');
+      const warningsEl = document.getElementById('projectRunWarnings');
+      const usageEl = document.getElementById('projectRunUsage');
+      const gateEl = document.getElementById('projectRunApprovalGate');
+
+      if (!preview || !card) return;
+      card.style.display = 'flex';
+
+      if (gateEl) {
+        gateEl.innerText = preview.requires_approval
+          ? 'Exact approval required before execution'
+          : 'Approval not required';
+      }
+
+      if (usageEl) {
+        usageEl.innerHTML = `<span>Model calls: ${preview.model_calls ?? 0}</span><span>Total tokens: ${preview.total_tokens ?? 0}</span>`;
+      }
+
+      if (tasksEl) {
+        if (!preview.tasks || preview.tasks.length === 0) {
+          tasksEl.innerText = 'Görev adımı bulunamadı.';
+        } else {
+          tasksEl.innerHTML = preview.tasks.map(t => `
+            <div style="background:rgba(255,255,255,0.03); padding:8px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
+              <div style="font-weight:600; color:var(--text); font-size:13px;">${escapeHtml(t.title)}</div>
+              <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">Atanan: ${escapeHtml(t.assigned_agent)} | Exact files: ${(t.exact_files || []).join(', ')}</div>
+              <div style="font-size:11px; color:#a5b4fc; margin-top:2px; font-family:'JetBrains Mono', monospace;">Doğrulama: ${escapeHtml(t.verification)}</div>
+            </div>
+          `).join('');
+        }
+      }
+
+      if (exactFilesEl) {
+        const files = preview.exact_files || [];
+        exactFilesEl.innerText = files.length > 0 ? files.join('\n') : 'Yok';
+      }
+
+      if (verificationsEl) {
+        const cmds = preview.verification_commands || [];
+        verificationsEl.innerText = cmds.length > 0 ? cmds.join('\n') : 'Yok';
+      }
+
+      if (warningsEl) {
+        const warns = preview.warnings || [];
+        warningsEl.innerText = warns.length > 0 ? warns.join('\n') : 'Uyarı bulunmuyor.';
+      }
+    }
+
+    function clearProjectRunPreview() {
+      const card = document.getElementById('projectRunPreviewCard');
+      if (card) card.style.display = 'none';
+    }
+
 
     // Keydown shortcut
     document.getElementById('taskInput')?.addEventListener('keydown', (e) => {

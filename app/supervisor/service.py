@@ -16,7 +16,16 @@ from typing import Any, Awaitable, Coroutine, TypeVar
 from app.agent.engine import AgentEngine
 from app.agents.registry import AgentRegistry
 from app.core.config import Settings
-from app.core.schemas import AgentRequest, AgentResponse, AgentStep
+from app.core.schemas import (
+    AgentRequest,
+    AgentResponse,
+    AgentStep,
+    ProjectRunPreviewRequest,
+    ProjectRunPreviewResponse,
+    ProjectRunPreviewTask,
+)
+from app.workspace.policy import WorkspacePolicy
+from app.tools.base import ToolError
 from app.memory.attention import AttentionBroker
 from app.memory.context_compiler import ContextCompiler, ContextSegment
 from app.memory.project import FileMemory, ProjectMemoryStore
@@ -6792,3 +6801,116 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             self._refresh_task_states(command)
             await self.store.put(command)
             return command
+
+    async def preview_project_run(
+        self,
+        request: ProjectRunPreviewRequest,
+    ) -> ProjectRunPreviewResponse:
+        policy = WorkspacePolicy(
+            root=self.settings.workspace_root,
+            max_file_bytes=self.settings.workspace_max_file_bytes,
+            max_search_results=self.settings.workspace_max_search_results,
+        )
+
+        try:
+            resolved_path = policy.resolve(request.workspace_path, must_exist=False)
+            policy.ensure_not_sensitive(resolved_path)
+            rel_path = resolved_path.relative_to(policy.root).as_posix()
+        except (ToolError, ValueError, OSError) as exc:
+            raise ValueError(f"Geçersiz veya korumalı workspace yolu: {exc}") from exc
+
+        try:
+            result = await self.planning_kernel.build(goal=request.goal)
+        except Exception as exc:
+            raise ValueError(f"Deterministik önizleme derlemesi başarısız: {exc}") from exc
+
+        known_paths = await self._known_paths()
+        integrity = validate_planning_document(
+            result.document,
+            known_paths=known_paths,
+            known_agents=set(self.agents.ids()),
+        )
+        if not integrity.valid:
+            raise ValueError(
+                "Plan doğrulaması başarısız: " + " | ".join(integrity.errors)
+            )
+
+        preview_tasks: list[ProjectRunPreviewTask] = []
+        all_exact_files: list[str] = []
+        all_verifications: list[str] = []
+
+        for task in result.document.tasks:
+            task_exact_files: list[str] = []
+            candidate_files = list(task.exact_files)
+            if not candidate_files:
+                for ev in task.evidence:
+                    ev_type = getattr(ev, "type", "") if not isinstance(ev, dict) else ev.get("type", "")
+                    ev_val = getattr(ev, "value", "") if not isinstance(ev, dict) else ev.get("value", "")
+                    if ev_type in {"file", "path"} and ev_val:
+                        candidate_files.append(ev_val)
+
+            if not candidate_files:
+                for kp in sorted(known_paths):
+                    if kp in task.title or kp in request.goal:
+                        candidate_files.append(kp)
+
+            for raw_path in candidate_files:
+                try:
+                    p = policy.resolve(raw_path, must_exist=False)
+                    policy.ensure_not_sensitive(p)
+                    rel_f = p.relative_to(policy.root).as_posix()
+                    if rel_f and rel_f not in task_exact_files:
+                        task_exact_files.append(rel_f)
+                except Exception as exc:
+                    raise ValueError(
+                        f"Görev adımı geçersiz exact file yolu içeriyor '{raw_path}': {exc}"
+                    ) from exc
+
+            if not task_exact_files:
+                raise ValueError(
+                    f"Görev adımı '{task.title}' en az bir exact file scope taşımalıdır."
+                )
+
+            verification_cmd = (task.verification or "").strip()
+            if not verification_cmd:
+                raise ValueError(
+                    f"Görev adımı '{task.title}' bir doğrulama komutu taşımalıdır."
+                )
+
+            preview_tasks.append(
+                ProjectRunPreviewTask(
+                    title=task.title,
+                    assigned_agent=task.assigned_agent,
+                    exact_files=task_exact_files,
+                    verification=verification_cmd,
+                    acceptance_criteria=list(task.acceptance_criteria),
+                )
+            )
+
+            for f in task_exact_files:
+                if f not in all_exact_files:
+                    all_exact_files.append(f)
+            if verification_cmd not in all_verifications:
+                all_verifications.append(verification_cmd)
+
+        warnings_list = list(integrity.warnings) if integrity.warnings else []
+        warnings_list.append(
+            "Preview is side-effect-free and does not execute commands or modify files."
+        )
+        warnings_list.append(
+            "Exact user approval will be required before any execution."
+        )
+
+        return ProjectRunPreviewResponse(
+            goal=request.goal,
+            workspace_path=rel_path if rel_path else ".",
+            tasks=preview_tasks,
+            exact_files=all_exact_files,
+            verification_commands=all_verifications,
+            warnings=warnings_list,
+            requires_approval=True,
+            model_calls=0,
+            total_tokens=0,
+            side_effect_free=True,
+        )
+

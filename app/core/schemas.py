@@ -378,3 +378,43 @@ class SupervisorApprovalRequest(BaseModel):
     approval_id: str | None = None
     approval_version: int | None = Field(default=None, ge=1)
     background: bool = True
+
+
+class ProjectRunPreviewRequest(BaseModel):
+    goal: str = Field(min_length=3, max_length=4000)
+    workspace_path: str = Field(default=".", max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_preview_fields(self):
+        stripped_goal = self.goal.strip()
+        if not stripped_goal or len(stripped_goal) < 3:
+            raise ValueError("Görev açıklaması boş olamaz ve en az 3 karakter olmalıdır.")
+        self.goal = stripped_goal
+        
+        stripped_path = self.workspace_path.strip() if self.workspace_path else "."
+        if not stripped_path:
+            stripped_path = "."
+        self.workspace_path = stripped_path
+        return self
+
+
+class ProjectRunPreviewTask(BaseModel):
+    title: str
+    assigned_agent: str
+    exact_files: list[str] = Field(default_factory=list)
+    verification: str
+    acceptance_criteria: list[str] = Field(default_factory=list)
+
+
+class ProjectRunPreviewResponse(BaseModel):
+    goal: str
+    workspace_path: str
+    tasks: list[ProjectRunPreviewTask]
+    exact_files: list[str]
+    verification_commands: list[str]
+    warnings: list[str] = Field(default_factory=list)
+    requires_approval: bool = True
+    model_calls: int = 0
+    total_tokens: int = 0
+    side_effect_free: bool = True
+

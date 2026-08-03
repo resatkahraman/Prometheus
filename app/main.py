@@ -58,6 +58,8 @@ from app.core.schemas import (
     SupervisorDecisionRequest,
     SupervisorAdvanceRequest,
     SupervisorApprovalRequest,
+    ProjectRunPreviewRequest,
+    ProjectRunPreviewResponse,
 )
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.routes import RouteCatalog
@@ -819,6 +821,22 @@ async def create_supervisor_command(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/supervisor/project-run/preview",
+    response_model=ProjectRunPreviewResponse,
+    tags=["supervisor"],
+)
+async def preview_project_run(
+    payload: ProjectRunPreviewRequest,
+) -> ProjectRunPreviewResponse:
+    try:
+        return await app.state.supervisor.preview_project_run(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get(
