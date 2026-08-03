@@ -1,0 +1,1 @@
+{"scripts":{"test":"node --test","build":"vite build"},"devDependencies":{"vite":"^4.0.0"}}

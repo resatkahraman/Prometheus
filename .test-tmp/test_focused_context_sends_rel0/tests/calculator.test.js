@@ -1,0 +1,1 @@
+import { calculate } from '../src/calculator.js';

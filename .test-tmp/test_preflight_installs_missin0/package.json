@@ -1,0 +1,1 @@
+{"scripts": {"test": "vitest"}, "dependencies": {"react": "1.0.0"}, "devDependencies": {"vitest": "0.24.5", "@testing-library/react": "1.0.0"}}

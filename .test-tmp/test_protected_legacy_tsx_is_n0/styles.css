@@ -1,0 +1,7 @@
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+  font-family: system-ui, sans-serif;
+}

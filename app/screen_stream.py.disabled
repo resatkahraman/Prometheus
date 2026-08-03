@@ -1,0 +1,294 @@
+import ctypes
+import io
+import time
+from PIL import Image
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+
+router = APIRouter(tags=["screen"])
+
+user32 = ctypes.windll.user32
+gdi32 = ctypes.windll.gdi32
+
+def get_screen_jpeg(quality: int = 60) -> bytes:
+    hdesktop = user32.GetDesktopWindow()
+    width = user32.GetSystemMetrics(0)
+    height = user32.GetSystemMetrics(1)
+
+    desktop_dc = user32.GetWindowDC(hdesktop)
+    img_dc = gdi32.CreateCompatibleDC(desktop_dc)
+
+    mem_bitmap = gdi32.CreateCompatibleBitmap(desktop_dc, width, height)
+    gdi32.SelectObject(img_dc, mem_bitmap)
+
+    gdi32.BitBlt(img_dc, 0, 0, width, height, desktop_dc, 0, 0, 0x00CC0020)
+
+    bmpinfo = ctypes.create_string_buffer(40)
+    ctypes.memmove(
+        bmpinfo,
+        b'\x28\x00\x00\x00' + width.to_bytes(4, 'little') + height.to_bytes(4, 'little') + b'\x01\x00\x18\x00\x00\x00\x00\x00',
+        16
+    )
+
+    stride = (width * 3 + 3) & ~3
+    bmp_data = ctypes.create_string_buffer(stride * height)
+    gdi32.GetDIBits(img_dc, mem_bitmap, 0, height, bmp_data, bmpinfo, 0)
+
+    img = Image.frombytes('RGB', (width, height), bmp_data.raw, 'raw', 'BGR', stride, -1)
+
+    gdi32.DeleteObject(mem_bitmap)
+    gdi32.DeleteDC(img_dc)
+    user32.ReleaseDC(hdesktop, desktop_dc)
+
+    buf = io.BytesIO()
+    img.save(buf, format='JPEG', quality=quality)
+    return buf.getvalue()
+
+def mjpeg_generator():
+    while True:
+        try:
+            frame = get_screen_jpeg(quality=55)
+            yield (
+                b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n'
+            )
+            time.sleep(0.05)  # ~20 FPS
+        except Exception:
+            time.sleep(0.2)
+
+@router.get("/screen/feed")
+async def screen_feed():
+    return StreamingResponse(
+        mjpeg_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+@router.post("/screen/click")
+async def screen_click(data: dict):
+    try:
+        norm_x = data.get("x", 0.5)
+        norm_y = data.get("y", 0.5)
+        width = user32.GetSystemMetrics(0)
+        height = user32.GetSystemMetrics(1)
+        px = int(norm_x * width)
+        py = int(norm_y * height)
+        user32.SetCursorPos(px, py)
+        # Mouse left click down & up
+        user32.mouse_event(0x0002, 0, 0, 0, 0)
+        user32.mouse_event(0x0004, 0, 0, 0, 0)
+        return {"status": "ok", "clicked": [px, py]}
+    except Exception as exc:
+        return JSONResponse({"status": "error", "message": str(exc)}, status_code=500)
+
+SCREEN_UI = r"""<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="color-scheme" content="dark">
+  <title>Antigravity 1:1 Canlı Ekran Yansıtma & Kontrol</title>
+  <style>
+    :root {
+      --bg: #07090e;
+      --panel: #111622;
+      --border: #232d3f;
+      --text: #f0f4fc;
+      --muted: #8b9bb4;
+      --accent: #3b82f6;
+      --accent2: #8b5cf6;
+      --success: #10b981;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    header {
+      background: rgba(17, 22, 34, 0.9);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 1rem;
+    }
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--success);
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--success); box-shadow: 0 0 8px var(--success);
+    }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #000;
+      position: relative;
+      overflow: hidden;
+    }
+    .screen-wrapper {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .screen-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      box-shadow: 0 0 30px rgba(0,0,0,0.8);
+      cursor: crosshair;
+      user-select: none;
+    }
+    .console-panel {
+      background: var(--panel);
+      border-top: 1px solid var(--border);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-height: 40vh;
+    }
+    .feed-log {
+      max-height: 90px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+      background: #090c12;
+      border: 1px solid var(--border);
+      padding: 8px;
+      border-radius: 8px;
+      line-height: 1.4;
+    }
+    .input-row {
+      display: flex;
+      gap: 8px;
+    }
+    input {
+      flex: 1;
+      background: #090c12;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); }
+    button {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: 0; color: #fff;
+      padding: 10px 18px;
+      border-radius: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    button:active { transform: scale(0.96); }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span>🖥️ Antigravity 1:1 Canlı Masaüstü</span>
+    </div>
+    <div class="badge">
+      <div class="dot"></div>
+      <span>CANLI EKRAN STREAM</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="screen-wrapper">
+      <img id="screenImg" class="screen-img" src="/screen/feed" onclick="handleTap(event)" alt="Canlı Masaüstü Ekranı" />
+    </div>
+
+    <div class="console-panel">
+      <div id="feedLog" class="feed-log">⚡ Antigravity 1:1 Canlı Ekran Yansıtma Aktif.\nEkrana dokunarak PC imlecini tıklatabilir veya aşağıdan komut verebilirsiniz.</div>
+      <div class="input-row">
+        <input id="promptInput" type="text" placeholder="Antigravity'ye Komut / Prompt Ver..." onkeydown="if(event.key==='Enter') sendPrompt()" />
+        <button onclick="sendPrompt()">Gönder</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const log = document.getElementById('feedLog');
+    const input = document.getElementById('promptInput');
+    const img = document.getElementById('screenImg');
+
+    function appendLog(msg) {
+      log.innerText += '\n' + msg;
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function handleTap(e) {
+      const rect = img.getBoundingClientRect();
+      const clickX = (e.clientX - rect.left) / rect.width;
+      const clickY = (e.clientY - rect.top) / rect.height;
+      if (clickX >= 0 && clickX <= 1 && clickY >= 0 && clickY <= 1) {
+        try {
+          await fetch('/screen/click', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x: clickX, y: clickY })
+          });
+          appendLog(`👉 PC Ekranına Tıklandı: [${(clickX*100).toFixed(0)}%, ${(clickY*100).toFixed(0)}%]`);
+        } catch(err) {}
+      }
+    }
+
+    async function sendPrompt() {
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendLog(`💬 Kullanıcı: ${text}`);
+      appendLog(`⚡ Antigravity görevi bilgisayarda yürütüyor...`);
+
+      try {
+        const resp = await fetch('/v1/supervisor/commands', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal: text, auto_start: true, autonomy_mode: 'trusted' })
+        });
+        const data = await resp.json();
+        appendLog(`✅ Görev Başlatıldı (ID: ${data.id}). Canlı ekrandan izleyebilirsiniz!`);
+      } catch (err) {
+        appendLog(`⚠️ Hata: ${err.message}`);
+      }
+    }
+  </script>
+</body>
+</html>
+"""
+
+@router.get("/screen", response_class=HTMLResponse)
+@router.get("/desktop", response_class=HTMLResponse)
+@router.get("/live", response_class=HTMLResponse)
+async def screen_ui():
+    return SCREEN_UI

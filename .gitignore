@@ -1,0 +1,54 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.test-tmp-*/
+.adam/
+data/
+.idea/
+.vscode/
+# Secrets
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Python environments and caches
+venv/
+env/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+# Prometheus runtime artifacts
+workspace/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+# Build artifacts
+build/
+dist/
+*.egg-info/
+# IDE and OS
+.DS_Store
+Thumbs.db
+# Temporary handoff files
+*.patch
+ANTIGRAVITY_PROMPT_*.md
+CODEX_PROMPT_*.md
+# Pytest temporary workspaces
+/.pytest-tmp/
+/.pytest-tmp_*/
+/.pytest_tmp/
+/.pytest_tmp_*/
+
+.pytest-tmp/
+.pytest-tmp*/
+.pytest_tmp/
+.pytest_tmp*/
+.pytest-cache/

@@ -1,0 +1,4 @@
+{bad-json
+{"usage_scope": "mission-a", "provider": "github", "success": true, "input_tokens": 100, "output_tokens": 20, "latency_ms": 50}
+{"usage_scope": "mission-b", "provider": "gemini", "success": true, "input_tokens": 999}
+{"usage_scope": "mission-a", "provider": "groq", "success": false, "input_tokens": 0, "output_tokens": 0, "latency_ms": 10}

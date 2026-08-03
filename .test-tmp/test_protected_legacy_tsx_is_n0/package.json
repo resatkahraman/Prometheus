@@ -1,0 +1,9 @@
+{
+  "name": "prometheus-real-world-vanilla-repair",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "build": "node --check src/app.js"
+  }
+}

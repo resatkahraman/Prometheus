@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Interactive Earth & Atmosphere | Prometheus 3D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: #030508;
+      font-family: 'Outfit', sans-serif;
+      color: #f0f4fc;
+      user-select: none;
+    }
+
+    #webgl-container {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+    }
+
+    /* Glassmorphism UI Overlay */
+    .ui-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 32px;
+    }
+
+    .ui-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: auto;
+    }
+
+    .brand-badge {
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      padding: 12px 24px;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.2);
+    }
+
+    .brand-icon {
+      font-size: 24px;
+      filter: drop-shadow(0 0 10px rgba(255, 140, 0, 0.8));
+    }
+
+    .brand-text h1 {
+      font-size: 18px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-text p {
+      font-size: 11px;
+      color: #8b9bb4;
+      font-weight: 600;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .ui-controls {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 24px;
+      padding: 24px;
+      width: 340px;
+      pointer-events: auto;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .control-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #a5b4fc;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-label {
+      font-size: 12px;
+      color: #8b9bb4;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .slider {
+      width: 100%;
+      height: 6px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.1);
+      outline: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #6366f1;
+      box-shadow: 0 0 12px #6366f1;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+
+    .slider::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 0;
+    }
+
+    .btn-action {
+      background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 14px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-action:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 24px rgba(99, 102, 241, 0.6);
+    }
+
+    .telemetry {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #64748b;
+      display: flex;
+      gap: 16px;
+    }
+
+    /* Hint Overlay */
+    .hint {
+      position: absolute;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.6);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 10px 20px;
+      border-radius: 99px;
+      font-size: 13px;
+      color: #94a3b8;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- WebGL Container -->
+  <div id="webgl-container"></div>
+
+  <!-- UI Overlay -->
+  <div class="ui-overlay">
+    <!-- Header -->
+    <div class="ui-header">
+      <div class="brand-badge">
+        <div class="brand-icon">🌍</div>
+        <div class="brand-text">
+          <h1>Prometheus 3D Earth</h1>
+          <p>Interactive Globe Engine</p>
+        </div>
+      </div>
+      <div class="telemetry">
+        <span>FPS: <strong id="fpsVal" style="color:#10b981">60</strong></span>
+        <span>LAT: <strong style="color:#818cf8">41.0082° N</strong></span>
+        <span>LON: <strong style="color:#818cf8">28.9784° E</strong></span>
+      </div>
+    </div>
+
+    <!-- Bottom Hint -->
+    <div class="hint">
+      <span>🖱️ Gezegeni döndürmek için sürükleyin • Yakınlaşmak için kaydırın</span>
+    </div>
+
+    <!-- Right Controls Panel -->
+    <div class="ui-controls" style="align-self: flex-end;">
+      <div class="control-title">
+        <span>⚙️ Gezegen Kontrolleri</span>
+        <span style="font-size:11px; color:#10b981;">● CANLI 3D</span>
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Dönüş Hızı</span>
+          <span id="speedDisplay">1.0x</span>
+        </div>
+        <input type="range" id="speedSlider" class="slider" min="0" max="3" step="0.1" value="1.0">
+      </div>
+
+      <div class="control-group">
+        <div class="control-label">
+          <span>Atmosfer Işıması</span>
+          <span id="glowDisplay">100%</span>
+        </div>
+        <input type="range" id="glowSlider" class="slider" min="0" max="2" step="0.1" value="1.0">
+      </div>
+
+      <div class="toggle-row">
+        <span style="font-size:13px; font-weight:600; color:#e2e8f0;">☁️ Bulut Katmanı</span>
+        <input type="checkbox" id="cloudsToggle" checked style="width:18px; height:18px; cursor:pointer; accent-color:#6366f1;">
+      </div>
+
+      <div class="toggle-row">
+        <span style="font-size:13px; font-weight:600; color:#e2e8f0;">✨ Yıldız Uzay Arka Planı</span>
+        <input type="checkbox" id="starsToggle" checked style="width:18px; height:18px; cursor:pointer; accent-color:#6366f1;">
+      </div>
+
+      <button id="pauseBtn" class="btn-action">
+        <span id="pauseIcon">⏸️</span>
+        <span id="pauseText">Dönüşü Duraklat</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <script>
+    // --- 1. SCENE & RENDERER SETUP ---
+    const container = document.getElementById('webgl-container');
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 3.2;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    container.appendChild(renderer.domElement);
+
+    // --- 2. PROCEDURAL TEXTURE GENERATOR (Procedural Earth Continents & Oceans) ---
+    function createProceduralEarthTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 2048;
+      canvas.height = 1024;
+      const ctx = canvas.getContext('2d');
+
+      // Deep Ocean Base
+      const oceanGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      oceanGrad.addColorStop(0, '#061329');
+      oceanGrad.addColorStop(0.5, '#0b2545');
+      oceanGrad.addColorStop(1, '#051020');
+      ctx.fillStyle = oceanGrad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Draw Procedural Landmasses (Continents & Islands)
+      ctx.fillStyle = '#1e3a29';
+      ctx.strokeStyle = '#2d5a3f';
+      ctx.lineWidth = 4;
+
+      function drawLandCluster(cx, cy, r, count) {
+        ctx.beginPath();
+        for (let i = 0; i < count; i++) {
+          const angle = (i / count) * Math.PI * 2;
+          const dist = r * (0.5 + Math.random() * 0.5);
+          const x = cx + Math.cos(angle) * dist;
+          const y = cy + Math.sin(angle) * dist;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      // Eurasia & Africa
+      drawLandCluster(1200, 350, 220, 16);
+      drawLandCluster(1100, 600, 180, 14);
+      // Americas
+      drawLandCluster(500, 320, 190, 15);
+      drawLandCluster(650, 680, 170, 14);
+      // Australia
+      drawLandCluster(1600, 720, 100, 10);
+      // Polar Ice Caps
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(0, 0, canvas.width, 60);
+      ctx.fillRect(0, canvas.height - 60, canvas.width, 60);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.wrapS = THREE.RepeatWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      return texture;
+    }
+
+    function createCloudsTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(255, 255, 255, 0)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      for (let i = 0; i < 40; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const rx = 40 + Math.random() * 100;
+        const ry = 15 + Math.random() * 40;
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      return new THREE.CanvasTexture(canvas);
+    }
+
+    // --- 3. EARTH MESH & ATMOSPHERE ---
+    const earthGeometry = new THREE.SphereGeometry(1, 64, 64);
+    const earthMaterial = new THREE.MeshStandardMaterial({
+      map: createProceduralEarthTexture(),
+      roughness: 0.6,
+      metalness: 0.1,
+    });
+    const earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
+    scene.add(earthMesh);
+
+    // Clouds Layer
+    const cloudsGeometry = new THREE.SphereGeometry(1.02, 64, 64);
+    const cloudsMaterial = new THREE.MeshStandardMaterial({
+      map: createCloudsTexture(),
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending
+    });
+    const cloudsMesh = new THREE.Mesh(cloudsGeometry, cloudsMaterial);
+    scene.add(cloudsMesh);
+
+    // Atmosphere Outer Glow Sphere
+    const atmosphereGeometry = new THREE.SphereGeometry(1.15, 64, 64);
+    const atmosphereMaterial = new THREE.ShaderMaterial({
+      vertexShader: `
+        varying vec3 vNormal;
+        void main() {
+          vNormal = normalize(normalMatrix * normal);
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vNormal;
+        uniform float uGlowIntensity;
+        void main() {
+          float intensity = pow(0.6 - dot(vNormal, vec3(0, 0, 1.0)), 2.5);
+          gl_FragColor = vec4(0.38, 0.4, 0.95, 1.0) * intensity * uGlowIntensity;
+        }
+      `,
+      uniforms: {
+        uGlowIntensity: { value: 1.0 }
+      },
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      transparent: true
+    });
+    const atmosphereMesh = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+    scene.add(atmosphereMesh);
+
+    // --- 4. LIGHTING & STARFIELD ---
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.8);
+    sunLight.position.set(5, 3, 5);
+    scene.add(sunLight);
+
+    const ambientLight = new THREE.AmbientLight(0x1a243b, 0.4);
+    scene.add(ambientLight);
+
+    // Starfield Background
+    const starsGeometry = new THREE.BufferGeometry();
+    const starsCount = 2000;
+    const starPositions = new Float32Array(starsCount * 3);
+    for (let i = 0; i < starsCount * 3; i += 3) {
+      starPositions[i] = (Math.random() - 0.5) * 200;
+      starPositions[i + 1] = (Math.random() - 0.5) * 200;
+      starPositions[i + 2] = (Math.random() - 0.5) * 200;
+    }
+    starsGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+    const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.7, transparent: true, opacity: 0.8 });
+    const starField = new THREE.Points(starsGeometry, starsMaterial);
+    scene.add(starField);
+
+    // --- 5. INTERACTION & CONTROLS ---
+    let isDragging = false;
+    let previousMousePosition = { x: 0, y: 0 };
+    let rotationSpeed = 0.003;
+    let isPaused = false;
+
+    window.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      previousMousePosition = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      const deltaX = e.clientX - previousMousePosition.x;
+      const deltaY = e.clientY - previousMousePosition.y;
+
+      earthMesh.rotation.y += deltaX * 0.005;
+      earthMesh.rotation.x += deltaY * 0.005;
+      cloudsMesh.rotation.y += deltaX * 0.005;
+      cloudsMesh.rotation.x += deltaY * 0.005;
+
+      previousMousePosition = { x: e.clientX, y: e.clientY };
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    window.addEventListener('wheel', (e) => {
+      camera.position.z += e.deltaY * 0.002;
+      camera.position.z = Math.max(1.8, Math.min(camera.position.z, 8.0));
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // UI Event Listeners
+    const speedSlider = document.getElementById('speedSlider');
+    const speedDisplay = document.getElementById('speedDisplay');
+    speedSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      rotationSpeed = 0.003 * val;
+      speedDisplay.innerText = val.toFixed(1) + 'x';
+    });
+
+    const glowSlider = document.getElementById('glowSlider');
+    const glowDisplay = document.getElementById('glowDisplay');
+    glowSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      atmosphereMaterial.uniforms.uGlowIntensity.value = val;
+      glowDisplay.innerText = Math.round(val * 100) + '%';
+    });
+
+    const cloudsToggle = document.getElementById('cloudsToggle');
+    cloudsToggle.addEventListener('change', (e) => {
+      cloudsMesh.visible = e.target.checked;
+    });
+
+    const starsToggle = document.getElementById('starsToggle');
+    starsToggle.addEventListener('change', (e) => {
+      starField.visible = e.target.checked;
+    });
+
+    const pauseBtn = document.getElementById('pauseBtn');
+    const pauseIcon = document.getElementById('pauseIcon');
+    const pauseText = document.getElementById('pauseText');
+    pauseBtn.addEventListener('click', () => {
+      isPaused = !isPaused;
+      pauseIcon.innerText = isPaused ? '▶️' : '⏸️';
+      pauseText.innerText = isPaused ? 'Dönüşü Başlat' : 'Dönüşü Duraklat';
+    });
+
+    // --- 6. ANIMATION LOOP ---
+    let lastTime = performance.now();
+    let frameCount = 0;
+    const fpsVal = document.getElementById('fpsVal');
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // Rotate Earth & Clouds
+      if (!isPaused && !isDragging) {
+        earthMesh.rotation.y += rotationSpeed;
+        cloudsMesh.rotation.y += rotationSpeed * 1.25;
+      }
+
+      // FPS Counter
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        fpsVal.innerText = frameCount;
+        frameCount = 0;
+        lastTime = now;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
