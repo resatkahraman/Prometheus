@@ -42,7 +42,11 @@ async def test_pandora_page_is_installable_and_honest() -> None:
         "Pandora metin sohbeti",
         'id="chat-form"',
         'maxlength="4000"',
-        "Project Run işlemlerine yetki vermez",
+        'id="project-run-card"',
+        'id="project-run-form"',
+        'maxlength="2000"',
+        "Planı masaüstü onayına gönder",
+        "Mobilde yalnız plan hazırlanır",
         "Sesli görüşme, yerel ses motoru doğrulandıktan sonra açılacak.",
     ):
         assert marker in html
@@ -70,7 +74,7 @@ async def test_service_worker_has_root_scope_and_safe_cache_rules() -> None:
     assert response.status_code == 200
     assert response.headers["service-worker-allowed"] == "/"
     source = response.text
-    assert 'const CACHE_NAME = "pandora-shell-v3"' in source
+    assert 'const CACHE_NAME = "pandora-shell-v4"' in source
     assert 'startsWith("/v1/")' in source
     assert 'request.method !== "GET"' in source
     assert 'request.headers.has("Authorization")' in source
@@ -87,6 +91,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "status",
         "pandora_voice",
         "pandora_chat",
+        "pandora_project_run",
         "authentication",
         "remote_access",
         "pairing_code_allowed",
@@ -96,6 +101,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "status": "ok",
         "pandora_voice": "pending",
         "pandora_chat": "ready",
+        "pandora_project_run": "ready",
         "authentication": "prometheus",
         "remote_access": "disabled",
         "pairing_code_allowed": False,
@@ -119,7 +125,13 @@ def test_pandora_javascript_uses_safe_browser_primitives() -> None:
     assert '"/v1/pandora/pair"' in source
     assert '"/v1/pandora/logout"' in source
     assert '"/v1/pandora/chat"' in source
+    assert '"/v1/pandora/projects"' in source
+    assert '"/v1/pandora/project-run/preview"' in source
+    assert '"/v1/pandora/project-run/commit"' in source
+    assert '"/v1/pandora/project-run/latest"' in source
+    assert '`/v1/pandora/project-run/${encodeURIComponent(activeProjectRunId)}`' in source
     assert "const CHAT_MESSAGE_MAX_CHARS = 4000" in source
     assert "const CHAT_HISTORY_MAX_MESSAGES = 12" in source
+    assert "const PROJECT_RUN_GOAL_MAX_CHARS = 2000" in source
     assert "document.createElement" in source
     assert 'credentials: "same-origin"' in source

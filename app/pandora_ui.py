@@ -77,7 +77,11 @@ PANDORA_UI = """<!doctype html>
         </form>
 
         <div id="paired-session" hidden>
-          <p>Bu cihaz, yalnız Pandora metin sohbetine yetkili güvenli bir oturumla bağlı.</p>
+          <p>
+            Bu cihaz Pandora metin sohbetine ve güvenli Project Run önizleme
+            aktarımına yetkili. Kod çalıştırma ve dosya değişikliği için masaüstü
+            Prometheus onayı zorunludur.
+          </p>
           <button id="pandora-logout" class="secondary-action" type="button">
             Bu cihazın bağlantısını kes
           </button>
@@ -100,9 +104,9 @@ PANDORA_UI = """<!doctype html>
         <p class="eyebrow">Mobil çalışma alanı</p>
         <h2 id="welcome-title">Pandora bağlantı bekliyor</h2>
         <p>
-          Güvenli cihaz eşleştirmesi tamamlandığında gerçek metin sohbeti bu
-          ekranda açılacak. Pandora oturumu genel Prometheus API'sine veya
-          Project Run işlemlerine yetki vermez.
+          Güvenli cihaz eşleştirmesi tamamlandığında metin sohbeti ve Project Run
+          önizleme aktarımı açılacak. Mobil oturum genel Prometheus API'sine veya
+          doğrudan kod çalıştırmaya yetki vermez.
         </p>
         <button class="microphone" type="button" disabled aria-describedby="voice-note">
           <span aria-hidden="true">●</span>
@@ -111,13 +115,13 @@ PANDORA_UI = """<!doctype html>
         <p id="voice-note" class="voice-note">Sesli görüşme, yerel ses motoru doğrulandıktan sonra açılacak.</p>
       </section>
 
-      <section id="chat-card" class="chat-card" aria-labelledby="chat-title" hidden>
-        <header class="chat-header">
+      <section id="chat-card" class="chat-card app-view" aria-labelledby="chat-title" hidden>
+        <header class="section-header">
           <div>
             <p class="eyebrow">Güvenli mobil sohbet</p>
             <h2 id="chat-title">Pandora metin sohbeti</h2>
           </div>
-          <span class="chat-scope">Sohbet-only</span>
+          <span class="scope-badge scope-chat">Sohbet-only</span>
         </header>
 
         <div
@@ -142,8 +146,8 @@ PANDORA_UI = """<!doctype html>
             required
           ></textarea>
           <div class="composer-footer">
-            <span id="chat-counter" class="chat-counter" aria-live="off">0/4000</span>
-            <button id="chat-submit" class="primary-action chat-submit" type="submit">Gönder</button>
+            <span id="chat-counter" class="counter" aria-live="off">0/4000</span>
+            <button id="chat-submit" class="primary-action compact-action" type="submit">Gönder</button>
           </div>
           <p id="chat-feedback" class="support-note" role="status" aria-live="polite"></p>
         </form>
@@ -156,15 +160,87 @@ PANDORA_UI = """<!doctype html>
           <p id="chat-voice-note" class="voice-note">Sesli görüşme bu görev kapsamında açılmadı.</p>
         </div>
       </section>
+
+      <section id="project-run-card" class="project-run-card app-view" aria-labelledby="project-run-title" hidden>
+        <header class="section-header">
+          <div>
+            <p class="eyebrow">Güvenli mobil görev aktarımı</p>
+            <h2 id="project-run-title">Project Run</h2>
+          </div>
+          <span class="scope-badge scope-run">Masaüstü onaylı</span>
+        </header>
+
+        <div class="run-notice">
+          <strong>Mobilde yalnız plan hazırlanır.</strong>
+          <p>Önizleme dosya değiştirmez. Oluşturulan planın her adımı masaüstü Prometheus'ta ayrıca onaylanmadan çalışmaz.</p>
+        </div>
+
+        <form id="project-run-form" class="project-run-form" novalidate>
+          <label for="project-run-workspace">Çalışma alanı</label>
+          <select id="project-run-workspace" name="workspace_path" required>
+            <option value="">Projeler yükleniyor...</option>
+          </select>
+
+          <label for="project-run-goal">Görev açıklaması</label>
+          <textarea
+            id="project-run-goal"
+            name="goal"
+            rows="5"
+            minlength="3"
+            maxlength="2000"
+            autocomplete="off"
+            placeholder="Örnek: app/main.py içindeki hata yanıtlarını düzenle ve ilgili testleri çalıştır."
+            required
+          ></textarea>
+          <div class="composer-footer">
+            <span id="project-run-counter" class="counter" aria-live="off">0/2000</span>
+            <button id="project-run-preview-button" class="primary-action compact-action" type="submit">Güvenli önizleme</button>
+          </div>
+          <p id="project-run-feedback" class="support-note" role="status" aria-live="polite"></p>
+        </form>
+
+        <section id="project-run-preview" class="run-panel" aria-labelledby="project-run-preview-title" hidden>
+          <div class="run-panel-heading">
+            <div>
+              <p class="eyebrow">Yan etkisiz plan</p>
+              <h3 id="project-run-preview-title">Onay aktarımı önizlemesi</h3>
+            </div>
+            <span id="project-run-preview-meta" class="run-meta"></span>
+          </div>
+          <div id="project-run-preview-tasks" class="run-task-list"></div>
+          <details class="run-files">
+            <summary>Exact file kapsamı</summary>
+            <ul id="project-run-preview-files"></ul>
+          </details>
+          <button id="project-run-commit-button" class="primary-action" type="button">
+            Planı masaüstü onayına gönder
+          </button>
+          <p class="support-note">Bu düğme yürütmeyi başlatmaz ve hiçbir dosyayı değiştirmez.</p>
+        </section>
+
+        <section id="project-run-status" class="run-panel" aria-labelledby="project-run-status-title" hidden>
+          <div class="run-panel-heading">
+            <div>
+              <p class="eyebrow">Aktarılan plan</p>
+              <h3 id="project-run-status-title">Project Run durumu</h3>
+            </div>
+            <button id="project-run-refresh-button" class="secondary-action compact-action" type="button">Yenile</button>
+          </div>
+          <p id="project-run-status-copy" class="run-status-copy"></p>
+          <div class="progress-track" aria-hidden="true"><span id="project-run-progress"></span></div>
+          <div id="project-run-status-tasks" class="run-task-list"></div>
+          <p class="support-note">Onay, çalıştırma, reddetme, yeniden deneme ve geri alma işlemleri masaüstü Prometheus'ta kalır.</p>
+        </section>
+      </section>
     </main>
 
     <nav class="bottom-nav" aria-label="Ana navigasyon">
-      <a class="nav-item active" href="/pandora" aria-current="page">
+      <button id="nav-chat" class="nav-item active" type="button" aria-current="page">
         <span>Sohbet</span><small>Metin hazır</small>
-      </a>
-      <span class="nav-item disabled" aria-disabled="true">
-        <span>Görevler</span><small>Yakında</small>
-      </span>
+      </button>
+      <button id="nav-project-run" class="nav-item" type="button" disabled>
+        <span>Görevler</span><small>Onay aktarımı</small>
+      </button>
       <span class="nav-item disabled" aria-disabled="true">
         <span>Ayarlar</span><small>Yakında</small>
       </span>

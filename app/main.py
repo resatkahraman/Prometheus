@@ -107,6 +107,14 @@ from app.security.pandora import (
     PANDORA_CHAT_RATE_LIMIT_DETAIL,
     PANDORA_CHAT_UNAVAILABLE_DETAIL,
     PANDORA_DEVICE_LIMIT_DETAIL,
+    PANDORA_PROJECT_LIST_LIMIT,
+    PANDORA_PROJECT_RUN_BUSY_DETAIL,
+    PANDORA_PROJECT_RUN_MAX_FILES,
+    PANDORA_PROJECT_RUN_MAX_TASKS,
+    PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL,
+    PANDORA_PROJECT_RUN_PREVIEW_REQUIRED_DETAIL,
+    PANDORA_PROJECT_RUN_RATE_LIMIT_DETAIL,
+    PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
     PANDORA_PAIRING_INVALID_DETAIL,
     PANDORA_PAIRING_LOCAL_ONLY_DETAIL,
     PANDORA_PAIRING_REQUIRED_DETAIL,
@@ -120,6 +128,17 @@ from app.security.pandora import (
     PandoraDeviceLimitError,
     PandoraPairRequest,
     PandoraPairingRejectedError,
+    PandoraProjectRunBusyError,
+    PandoraProjectRunCommitRequest,
+    PandoraProjectRunCommitResponse,
+    PandoraProjectRunPreviewRequest,
+    PandoraProjectRunPreviewResponse,
+    PandoraProjectRunPreviewTask,
+    PandoraProjectRunRateLimitError,
+    PandoraProjectRunStatusResponse,
+    PandoraProjectRunTaskStatus,
+    PandoraProjectsResponse,
+    PandoraProjectSummary,
     PandoraSessionManager,
     request_pandora_session_token,
 )
@@ -206,8 +225,10 @@ _PANDORA_CHAT_SYSTEM_PROMPT = (
     "açık ve uygulanabilir yanıtlar ver; bilmediğin bilgileri uydurma. Bu "
     "kanal yalnızca konuşma yanıtı üretir. Araç çalıştırdığını, dosya "
     "değiştirdiğini, Project Run başlattığını, mikrofon kullandığını veya "
-    "cihaz özelliklerine eriştiğini iddia etme. Böyle bir işlem istenirse "
-    "bu mobil sohbet sürümünde desteklenmediğini açıkça belirt. Sistem, "
+    "cihaz özelliklerine eriştiğini iddia etme. Project Run istenirse "
+    "kullanıcıyı Pandora içindeki Görevler sekmesine yönlendir; bu işlemin "
+    "sohbet içinden desteklenmediğini ve sohbetin planı onaylayamayacağını "
+    "veya çalıştıramayacağını açıkça belirt. Sistem, "
     "güvenlik, kimlik doğrulama veya sağlayıcı ayrıntılarını ifşa etme."
 )
 
@@ -432,6 +453,7 @@ async def pandora_status(request: Request) -> JSONResponse:
             "status": "ok",
             "pandora_voice": "pending",
             "pandora_chat": "ready",
+            "pandora_project_run": "ready",
             "authentication": authentication,
             "remote_access": (
                 "enabled"
@@ -600,6 +622,347 @@ async def chat_with_pandora(
         ) from exc
     finally:
         manager.end_chat_request(token)
+
+
+@app.get(
+    "/v1/pandora/projects",
+    response_model=PandoraProjectsResponse,
+    tags=["pandora"],
+)
+async def list_pandora_projects(
+    request: Request,
+    response: Response,
+) -> PandoraProjectsResponse:
+    if request.state.pandora_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+
+    try:
+        manager: WorkspaceProjectManager = request.app.state.workspace_projects
+        projects_response = manager.list_projects()
+        source_projects = projects_response.projects[:PANDORA_PROJECT_LIST_LIMIT]
+        projects = [
+            PandoraProjectSummary(
+                name=project.name,
+                workspace_path=project.workspace_path,
+                project_types=list(project.project_types[:8]),
+                dirty=bool(project.git.dirty),
+            )
+            for project in source_projects
+        ]
+        response.headers["Cache-Control"] = "no-store"
+        return PandoraProjectsResponse(
+            projects=projects,
+            truncated=(
+                projects_response.truncated
+                or len(projects_response.projects) > len(projects)
+            ),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
+        ) from exc
+
+
+@app.post(
+    "/v1/pandora/project-run/preview",
+    response_model=PandoraProjectRunPreviewResponse,
+    tags=["pandora"],
+)
+async def preview_pandora_project_run(
+    payload: PandoraProjectRunPreviewRequest,
+    request: Request,
+    response: Response,
+) -> PandoraProjectRunPreviewResponse:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+    if request.state.pandora_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+
+    try:
+        session = manager.begin_project_run_request(token)
+    except PandoraProjectRunBusyError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=PANDORA_PROJECT_RUN_BUSY_DETAIL,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+    except PandoraProjectRunRateLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=PANDORA_PROJECT_RUN_RATE_LIMIT_DETAIL,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    if session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+
+    try:
+        supervisor: SupervisorService = request.app.state.supervisor
+        preview = await supervisor.preview_project_run(
+            ProjectRunPreviewRequest(
+                goal=payload.goal,
+                workspace_path=payload.workspace_path,
+            )
+        )
+        if (
+            len(preview.tasks) > PANDORA_PROJECT_RUN_MAX_TASKS
+            or len(preview.exact_files) > PANDORA_PROJECT_RUN_MAX_FILES
+        ):
+            raise ValueError("Pandora Project Run preview scope is too large")
+
+        manager.remember_project_run_preview(
+            token,
+            preview_digest=preview.preview_digest,
+            goal=preview.goal,
+            workspace_path=preview.workspace_path,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return PandoraProjectRunPreviewResponse(
+            goal=preview.goal,
+            workspace_path=preview.workspace_path,
+            tasks=[
+                PandoraProjectRunPreviewTask(
+                    title=task.title,
+                    exact_files=list(task.exact_files),
+                    verification=task.verification,
+                )
+                for task in preview.tasks
+            ],
+            exact_files=list(preview.exact_files),
+            task_count=len(preview.tasks),
+            exact_file_count=len(preview.exact_files),
+            requires_approval=True,
+            side_effect_free=True,
+            preview_digest=preview.preview_digest,
+            expires_in=manager.project_run_preview_ttl_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Project Run açıklaması veya workspace seçimi güvenli bir "
+                "önizleme oluşturamadı."
+            ),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
+        ) from exc
+    finally:
+        manager.end_project_run_request(token)
+
+
+@app.post(
+    "/v1/pandora/project-run/commit",
+    response_model=PandoraProjectRunCommitResponse,
+    tags=["pandora"],
+)
+async def commit_pandora_project_run(
+    payload: PandoraProjectRunCommitRequest,
+    request: Request,
+    response: Response,
+) -> PandoraProjectRunCommitResponse:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+    if request.state.pandora_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+    if not manager.project_run_preview_is_valid(
+        token,
+        preview_digest=payload.preview_digest,
+        goal=payload.goal,
+        workspace_path=payload.workspace_path,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=PANDORA_PROJECT_RUN_PREVIEW_REQUIRED_DETAIL,
+        )
+
+    try:
+        session = manager.begin_project_run_request(token)
+    except PandoraProjectRunBusyError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=PANDORA_PROJECT_RUN_BUSY_DETAIL,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+    except PandoraProjectRunRateLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=PANDORA_PROJECT_RUN_RATE_LIMIT_DETAIL,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    if session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+
+    try:
+        supervisor: SupervisorService = request.app.state.supervisor
+        committed = await supervisor.commit_project_run(
+            ProjectRunCommitRequest(
+                goal=payload.goal,
+                workspace_path=payload.workspace_path,
+                preview_digest=payload.preview_digest,
+                autonomy_mode="locked",
+                background=True,
+                force_new=False,
+            )
+        )
+        manager.register_project_run(token, committed.command_id)
+        response.headers["Cache-Control"] = "no-store"
+        return PandoraProjectRunCommitResponse(
+            command_id=committed.command_id,
+            status=committed.status,
+            goal=committed.goal,
+            workspace_path=committed.workspace_path,
+            task_count=len(committed.task_ids),
+            requires_desktop_approval=True,
+            execution_started=False,
+            created=committed.created,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Project Run oluşturulamadı. Önizleme güncelliğini veya "
+                "masaüstündeki etkin görevi kontrol et."
+            ),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
+        ) from exc
+    finally:
+        manager.end_project_run_request(token)
+
+
+@app.get(
+    "/v1/pandora/project-run/latest",
+    response_model=PandoraProjectRunStatusResponse,
+    tags=["pandora"],
+)
+async def read_latest_pandora_project_run(
+    request: Request,
+    response: Response,
+) -> PandoraProjectRunStatusResponse:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+    if request.state.pandora_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+    command_id = manager.latest_project_run_id(token)
+    if command_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL,
+        )
+    return await read_pandora_project_run(
+        command_id=command_id,
+        request=request,
+        response=response,
+    )
+
+
+@app.get(
+    "/v1/pandora/project-run/{command_id}",
+    response_model=PandoraProjectRunStatusResponse,
+    tags=["pandora"],
+)
+async def read_pandora_project_run(
+    command_id: str,
+    request: Request,
+    response: Response,
+) -> PandoraProjectRunStatusResponse:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+    if request.state.pandora_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+    if not manager.owns_project_run(token, command_id):
+        raise HTTPException(
+            status_code=404,
+            detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL,
+        )
+
+    try:
+        supervisor: SupervisorService = request.app.state.supervisor
+        command = await supervisor.get(command_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL,
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
+        ) from exc
+
+    if not command.project_run_preview_digest:
+        raise HTTPException(
+            status_code=404,
+            detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL,
+        )
+
+    total_tasks = len(command.tasks)
+    completed_tasks = sum(task.status == "completed" for task in command.tasks)
+    failed_tasks = sum(task.status == "failed" for task in command.tasks)
+    waiting_approval_tasks = sum(
+        task.status == "awaiting_approval" or task.approval_state == "pending"
+        for task in command.tasks
+    )
+    progress_percent = (
+        round((completed_tasks / total_tasks) * 100)
+        if total_tasks
+        else 0
+    )
+    terminal = bool(
+        command.archived or command.status in {"completed", "failed"}
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return PandoraProjectRunStatusResponse(
+        command_id=command.id,
+        goal=command.goal,
+        workspace_path=command.project_run_workspace_path or ".",
+        status=command.status,
+        total_tasks=total_tasks,
+        completed_tasks=completed_tasks,
+        failed_tasks=failed_tasks,
+        waiting_approval_tasks=waiting_approval_tasks,
+        progress_percent=progress_percent,
+        requires_desktop_approval=waiting_approval_tasks > 0,
+        terminal=terminal,
+        tasks=[
+            PandoraProjectRunTaskStatus(
+                title=task.title,
+                status=task.status,
+                approval_state=task.approval_state,
+                exact_file_count=len(task.exact_files),
+            )
+            for task in command.tasks
+        ],
+    )
 
 
 @app.post("/v1/pandora/logout", status_code=204, tags=["system"])
