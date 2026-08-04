@@ -8,8 +8,17 @@ def test_setup_script_is_isolated_and_dry_run_by_default() -> None:
     source = (root / "scripts" / "setup_pandora_tts.ps1").read_text(encoding="utf-8")
     assert r'venvs\pandora-tts' in source
     assert "if (-not $Apply)" in source
-    assert "chatterbox-tts==$ChatterboxVersion" in source
     assert "$ChatterboxVersion = \"0.1.7\"" in source
+    assert (
+        '$ChatterboxSourceRevision = '
+        '"3f35dfc8fbe63e5b29793289dc68f1875bb317a5"'
+    ) in source
+    assert (
+        "git+https://github.com/resemble-ai/chatterbox.git@"
+        "$ChatterboxSourceRevision"
+    ) in source
+    assert "$ChatterboxSource `" in source
+    assert "$HuggingFaceHubVersion = \"1.3.0\"" in source
     assert "$TorchVersion = \"2.6.0\"" in source
     assert "C:\\Users\\Reşat" not in source
     assert ".venv\\Scripts" not in source
@@ -21,6 +30,9 @@ def test_setup_verifier_checks_multilingual_v3_and_turkish() -> None:
     assert "ChatterboxMultilingualTTS" in source
     assert "get_supported_languages" in source
     assert '"tr"' in source
+    assert '["device", "t3_model"]' in source
+    assert '["ckpt_dir", "device", "t3_model"]' in source
+    assert "verify_pandora_environment.py" in source
 
 
 def test_colab_notebook_has_no_drive_or_api_key_dependency() -> None:

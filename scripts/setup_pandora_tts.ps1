@@ -19,8 +19,10 @@ $DownloadScript = Join-Path $Project "scripts\download_pandora_model.py"
 $PythonMinor = "3.11"
 $TorchVersion = "2.6.0"
 $ChatterboxVersion = "0.1.7"
+$ChatterboxSourceRevision = "3f35dfc8fbe63e5b29793289dc68f1875bb317a5"
+$ChatterboxSource = "git+https://github.com/resemble-ai/chatterbox.git@$ChatterboxSourceRevision"
 $AiohttpVersion = "3.11.18"
-$HuggingFaceHubVersion = "0.34.3"
+$HuggingFaceHubVersion = "1.3.0"
 $MinDiskGB = 18
 
 function Write-Step([string]$Message) {
@@ -60,21 +62,44 @@ function Verify-Environment {
     if (-not (Test-Path -LiteralPath $VenvPython -PathType Leaf)) {
         throw "Pandora TTS venv is missing: $VenvPython"
     }
-    Invoke-Checked $VenvPython "-c" @'
+
+    New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null
+    $verifyScript = Join-Path $RuntimeDir "verify_pandora_environment.py"
+    $verificationCode = @'
 import importlib.metadata as md
-import torch
 import inspect
+import torch
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
 assert md.version("chatterbox-tts") == "0.1.7"
 assert md.version("aiohttp") == "3.11.18"
-assert "t3_model" in inspect.signature(ChatterboxMultilingualTTS.from_pretrained).parameters
+assert md.version("huggingface-hub") == "1.3.0"
+assert list(inspect.signature(ChatterboxMultilingualTTS.from_pretrained).parameters) == ["device", "t3_model"]
+assert list(inspect.signature(ChatterboxMultilingualTTS.from_local).parameters) == ["ckpt_dir", "device", "t3_model"]
 assert "tr" in ChatterboxMultilingualTTS.get_supported_languages()
+
 print("python=ok")
 print("torch=", torch.__version__)
 print("cuda_available=", torch.cuda.is_available())
 if torch.cuda.is_available():
     print("gpu=", torch.cuda.get_device_name(0))
 '@
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText(
+        $verifyScript,
+        $verificationCode,
+        $utf8NoBom
+    )
+
+    try {
+        Invoke-Checked $VenvPython $verifyScript
+    } finally {
+        Remove-Item `
+            -LiteralPath $verifyScript `
+            -Force `
+            -ErrorAction SilentlyContinue
+    }
 }
 
 if ($Remove) {
@@ -99,7 +124,7 @@ $PythonCommand = Find-Python311
 if (-not $Apply) {
     Write-Host "[DRY-RUN] Venv: $VenvDir" -ForegroundColor Yellow
     Write-Host "[DRY-RUN] torch==$TorchVersion + cu124" -ForegroundColor Yellow
-    Write-Host "[DRY-RUN] chatterbox-tts==$ChatterboxVersion" -ForegroundColor Yellow
+    Write-Host "[DRY-RUN] Chatterbox V3 source revision: $ChatterboxSourceRevision" -ForegroundColor Yellow
     Write-Host "[DRY-RUN] aiohttp==$AiohttpVersion" -ForegroundColor Yellow
     if ($DownloadRuntimeModel) {
         Write-Host "[DRY-RUN] Download exact model revision from $ConfigPath to $ModelCache" -ForegroundColor Yellow
@@ -121,7 +146,7 @@ Invoke-Checked $VenvPython "-m" "pip" "install" `
     "torch==$TorchVersion" "torchaudio==$TorchVersion" `
     "--index-url" "https://download.pytorch.org/whl/cu124"
 Invoke-Checked $VenvPython "-m" "pip" "install" `
-    "chatterbox-tts==$ChatterboxVersion" `
+    $ChatterboxSource `
     "aiohttp==$AiohttpVersion" `
     "huggingface-hub==$HuggingFaceHubVersion"
 
