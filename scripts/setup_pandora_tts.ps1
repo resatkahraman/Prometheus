@@ -78,6 +78,17 @@ assert list(inspect.signature(ChatterboxMultilingualTTS.from_pretrained).paramet
 assert list(inspect.signature(ChatterboxMultilingualTTS.from_local).parameters) == ["ckpt_dir", "device", "t3_model"]
 assert "tr" in ChatterboxMultilingualTTS.get_supported_languages()
 
+import json
+try:
+    dist = md.distribution("chatterbox-tts")
+    direct_url = dist.read_text("direct_url.json")
+    if direct_url:
+        data = json.loads(direct_url)
+        commit = data.get("vcs_info", {}).get("commit_id", "")
+        assert commit.startswith("3f35dfc8fbe63e5b29793289dc68f1875bb317a5") or "3f35dfc8fbe63e5b29793289dc68f1875bb317a5" in str(data)
+except Exception:
+    pass
+
 print("python=ok")
 print("torch=", torch.__version__)
 print("cuda_available=", torch.cuda.is_available())

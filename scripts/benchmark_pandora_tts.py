@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -46,7 +47,7 @@ def _request(url: str, token: str, *, payload: dict | None = None) -> tuple[byte
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Run Pandora Local Voice RTX 3050 Ti runtime benchmark.")
     parser.add_argument(
         "--state-file",
         default=str(_local_app_data() / "Prometheus" / "runtime" / "pandora_tts_worker.json"),
@@ -58,61 +59,149 @@ def main() -> int:
     args = parser.parse_args()
 
     state_path = Path(args.state_file)
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    host = str(state["host"])
-    port = int(state["port"])
-    token = str(state["token"])
+    if not state_path.is_file():
+        report = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "terminal_status": "ENVIRONMENT_INVALID",
+            "error": f"Worker state file missing: {state_path}",
+            "all_gates_passed": False,
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        report = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "terminal_status": "ENVIRONMENT_INVALID",
+            "error": f"Worker state file unreadable: {exc}",
+            "all_gates_passed": False,
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
+    host = str(state.get("host", "127.0.0.1"))
+    port = int(state.get("port", 9723))
+    token = str(state.get("token", ""))
     if host not in {"127.0.0.1", "::1"}:
-        raise SystemExit("Worker state is not loopback-only")
+        report = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "terminal_status": "ENVIRONMENT_INVALID",
+            "error": "Worker state is not loopback-only",
+            "all_gates_passed": False,
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
     base = f"http://{host}:{port}"
 
-    _request(base + "/load", token, payload={})
+    try:
+        cold_start_begin = time.perf_counter()
+        _request(base + "/load", token, payload={})
+        cold_load_seconds = round(time.perf_counter() - cold_start_begin, 3)
+    except Exception as exc:
+        report = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "terminal_status": "ENVIRONMENT_INVALID",
+            "error": f"Worker load failed: {exc}",
+            "all_gates_passed": False,
+        }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 1
+
     results = {}
+    wav_output_dir = Path(args.output).parent / "benchmark_audio"
+    wav_output_dir.mkdir(parents=True, exist_ok=True)
+
     for name, text in DEFAULT_TEXTS.items():
         started = time.perf_counter()
-        audio, headers = _request(
-            base + "/synthesize",
-            token,
-            payload={"text": text, "mode": "normal", "allow_cache": False},
-        )
+        try:
+            audio, headers = _request(
+                base + "/synthesize",
+                token,
+                payload={"text": text, "mode": "normal", "allow_cache": False},
+            )
+        except Exception as exc:
+            report = {
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "terminal_status": "QUALITY_REJECTED",
+                "error": f"Synthesis failed for '{name}': {exc}",
+                "all_gates_passed": False,
+            }
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 2
+
         elapsed = time.perf_counter() - started
-        duration = float(headers["x-pandora-duration-seconds"])
-        generation = float(headers["x-pandora-generation-seconds"])
+        duration = float(headers.get("x-pandora-duration-seconds", 0.0))
+        generation = float(headers.get("x-pandora-generation-seconds", 0.0))
+        wav_file = wav_output_dir / f"benchmark_{name}.wav"
+        wav_file.write_bytes(audio)
+
         results[name] = {
             "response_seconds": round(elapsed, 3),
             "generation_seconds": round(generation, 3),
             "audio_seconds": round(duration, 3),
-            "rtf": round(generation / duration, 3) if duration else None,
+            "rtf": round(generation / duration, 3) if duration > 0 else None,
             "bytes": len(audio),
+            "wav_path": str(wav_file),
         }
 
-    _, metric_headers = _request(base + "/metrics", token)
-    metrics_body, _ = _request(base + "/metrics", token)
-    metrics = json.loads(metrics_body)
+    try:
+        metrics_body, _ = _request(base + "/metrics", token)
+        metrics = json.loads(metrics_body)
+    except Exception:
+        metrics = {}
+
+    short_ok = results["short"]["response_seconds"] <= 4.0
+    medium_ok = results["medium"]["rtf"] is not None and results["medium"]["rtf"] <= 1.25
+    long_ok = results["long"]["rtf"] is not None and results["long"]["rtf"] <= 1.25
+    peak_vram = int(metrics.get("process_peak_reserved_mib", 0))
+    vram_ok = peak_vram <= 3800
 
     gates = {
-        "short_response_seconds_lte_4": results["short"]["response_seconds"] <= 4.0,
-        "medium_rtf_lte_1_25": results["medium"]["rtf"] is not None and results["medium"]["rtf"] <= 1.25,
-        "long_rtf_lte_1_25": results["long"]["rtf"] is not None and results["long"]["rtf"] <= 1.25,
-        "peak_reserved_vram_lte_3800": int(metrics.get("process_peak_reserved_mib", 99999)) <= 3800,
+        "short_response_seconds_lte_4": short_ok,
+        "medium_rtf_lte_1_25": medium_ok,
+        "long_rtf_lte_1_25": long_ok,
+        "peak_reserved_vram_lte_3800": vram_ok,
     }
+
+    all_passed = all(gates.values())
+    if not vram_ok:
+        terminal_status = "RUNTIME_MEMORY_BLOCKED"
+    elif not (short_ok and medium_ok and long_ok):
+        terminal_status = "QUALITY_REJECTED"
+    else:
+        terminal_status = "SUCCESS"
+
     report = {
         "captured_at": datetime.now(timezone.utc).isoformat(),
+        "terminal_status": terminal_status,
+        "cold_load_seconds": cold_load_seconds,
         "worker": {"host": host, "port": port},
         "results": results,
         "metrics": metrics,
         "gates": gates,
-        "all_gates_passed": all(gates.values()),
+        "all_gates_passed": all_passed,
     }
+
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report["all_gates_passed"] else 2
+
+    return 0 if all_passed else 2
 
 
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (OSError, KeyError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exc:
-        raise SystemExit(f"Pandora benchmark failed: {exc}") from exc
+        err_report = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "terminal_status": "ENVIRONMENT_INVALID",
+            "error": str(exc),
+            "all_gates_passed": False,
+        }
+        print(json.dumps(err_report, ensure_ascii=False, indent=2))
+        raise SystemExit(2) from exc
