@@ -28,6 +28,7 @@ from app.approvals.manager import ApprovalManager
 from app.chat_ui import CHAT_UI
 from app.command_ui import COMMAND_UI
 from app.lab_ui import LAB_UI
+from app.pandora_ui import PANDORA_UI
 from app.improvement.models import (
     BenchmarkRunRequest,
     CandidateCreateRequest,
@@ -303,6 +304,29 @@ async def command_center() -> str:
 @app.get("/lab", response_class=HTMLResponse, tags=["system"])
 async def improvement_lab() -> str:
     return LAB_UI
+
+
+@app.get("/pandora", response_class=HTMLResponse, tags=["system"])
+async def pandora() -> str:
+    return PANDORA_UI
+
+
+@app.get("/pandora-sw.js", response_class=FileResponse, tags=["system"])
+async def pandora_service_worker() -> FileResponse:
+    return FileResponse(
+        _os.path.join(static_dir, "pandora", "sw.js"),
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/v1/pandora/status", tags=["system"])
+async def pandora_status() -> dict[str, str]:
+    return {
+        "service": "prometheus",
+        "status": "ok",
+        "pandora_voice": "pending",
+    }
 
 
 @app.get("/arena", response_class=HTMLResponse, tags=["arena"])

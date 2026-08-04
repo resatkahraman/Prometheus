@@ -1,0 +1,20 @@
+{
+  "name": "Pandora",
+  "short_name": "Pandora",
+  "description": "Prometheus için güvenli mobil asistan kabuğu.",
+  "start_url": "/pandora",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "tr",
+  "theme_color": "#090b12",
+  "background_color": "#090b12",
+  "icons": [
+    {
+      "src": "/static/pandora/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

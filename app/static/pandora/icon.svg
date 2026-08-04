@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Pandora">
+  <rect width="512" height="512" rx="112" fill="#090b12"/>
+  <circle cx="256" cy="256" r="154" fill="#17152a" stroke="#7565e8" stroke-width="16"/>
+  <circle cx="256" cy="256" r="104" fill="#6655d8"/>
+  <circle cx="220" cy="216" r="48" fill="#b9b2ff" opacity=".9"/>
+  <path d="M256 114a142 142 0 0 1 0 284" fill="none" stroke="#a79cff" stroke-width="18" stroke-linecap="round"/>
+</svg>
