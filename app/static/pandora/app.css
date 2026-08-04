@@ -16,7 +16,8 @@ body {
     #090b12;
 }
 
-button, a { font: inherit; }
+button, input, a { font: inherit; }
+button { min-height: 44px; }
 
 .app-shell {
   width: min(100%, 46rem);
@@ -33,11 +34,52 @@ h1 { margin-bottom: 0; font-size: clamp(2rem, 9vw, 3.25rem); letter-spacing: -.0
 .shell-badge { padding: .45rem .7rem; border: 1px solid #37334e; border-radius: 999px; color: #c9c4eb; font-size: .75rem; }
 
 main { display: grid; gap: 1rem; }
-.status-card, .welcome-card { border: 1px solid #25283a; background: rgba(20, 22, 34, .86); box-shadow: 0 1rem 3rem rgba(0,0,0,.2); }
+.status-card, .pairing-card, .welcome-card { border: 1px solid #25283a; background: rgba(20, 22, 34, .86); box-shadow: 0 1rem 3rem rgba(0,0,0,.2); }
 .status-card { gap: .8rem; padding: 1rem; border-radius: 1rem; }
 .status-card h2 { margin-bottom: .15rem; font-size: .82rem; }
 .status-card p { margin-bottom: 0; color: #c6c9d9; font-size: .9rem; }
 .status-indicator { width: .75rem; height: .75rem; flex: 0 0 auto; border: 2px solid #a79cff; border-radius: 50%; background: #4a416d; }
+.status-card[data-state="connected"] .status-indicator { border-color: #79d7a6; background: #2f8a60; box-shadow: 0 0 1rem rgba(121, 215, 166, .35); }
+.status-card[data-state="attention"] .status-indicator { border-color: #f2c879; background: #8b682d; }
+.status-card[data-state="offline"] .status-indicator { border-color: #ff9d9d; background: #873c4a; }
+
+.pairing-card { padding: clamp(1.25rem, 5vw, 2rem); border-radius: 1.25rem; }
+.pairing-card h2 { margin-bottom: .65rem; font-size: clamp(1.25rem, 6vw, 1.75rem); }
+.pairing-card p { color: #afb3c6; line-height: 1.55; }
+.pairing-card form, #pairing-admin, #paired-session, #prometheus-session, #remote-disabled { display: grid; gap: .75rem; }
+.pairing-card label { color: #c6c9d9; font-size: .82rem; font-weight: 650; }
+.pairing-card input {
+  width: 100%;
+  min-height: 48px;
+  padding: .75rem .85rem;
+  border: 1px solid #343749;
+  border-radius: .85rem;
+  outline: none;
+  background: #0e1018;
+  color: #f5f7ff;
+}
+.pairing-card input:focus { border-color: #8d7fff; box-shadow: 0 0 0 3px rgba(141, 127, 255, .15); }
+.primary-action, .secondary-action {
+  width: 100%;
+  padding: .8rem 1rem;
+  border-radius: .85rem;
+  font-weight: 750;
+}
+.primary-action { border: 0; background: linear-gradient(135deg, #7563e8, #9588ff); color: white; }
+.secondary-action { border: 1px solid #3a3d50; background: #1a1c27; color: #d7d9e5; }
+.primary-action:disabled, .secondary-action:disabled { cursor: wait; opacity: .58; }
+.pairing-code {
+  display: block;
+  padding: .75rem;
+  border: 1px dashed #5d568a;
+  border-radius: .85rem;
+  background: #0f1019;
+  color: #dedaff;
+  font: 800 clamp(2rem, 12vw, 3rem)/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .16em;
+  text-align: center;
+}
+.support-note { min-height: 1.25rem; margin-bottom: 0; color: #969aac !important; font-size: .82rem; }
 
 .welcome-card { margin-top: .25rem; padding: clamp(1.4rem, 7vw, 2.5rem); border-radius: 1.5rem; text-align: center; }
 .welcome-card h2 { margin-bottom: .7rem; font-size: clamp(1.55rem, 7vw, 2.2rem); }
@@ -63,6 +105,12 @@ main { display: grid; gap: 1rem; }
 .nav-item { display: flex; min-width: 44px; min-height: 44px; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: .15rem; border-radius: .8rem; color: #8e92a4; text-decoration: none; font-size: .82rem; }
 .nav-item.active { background: #201d35; color: #d7d2ff; }
 .nav-item small { font-size: .62rem; }
+
+[hidden] { display: none !important; }
+
+@media (min-width: 36rem) {
+  .primary-action, .secondary-action { width: auto; justify-self: start; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }

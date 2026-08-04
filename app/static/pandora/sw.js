@@ -1,4 +1,4 @@
-const CACHE_NAME = "pandora-shell-v1";
+const CACHE_NAME = "pandora-shell-v2";
 const SHELL_RESOURCES = [
   "/pandora",
   "/static/pandora/app.css",

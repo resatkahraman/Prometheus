@@ -101,6 +101,20 @@ from app.security.network import (
     REMOTE_ACCESS_DISABLED_DETAIL,
     is_local_http_request,
 )
+from app.security.pandora import (
+    PANDORA_DEVICE_LIMIT_DETAIL,
+    PANDORA_PAIRING_INVALID_DETAIL,
+    PANDORA_PAIRING_LOCAL_ONLY_DETAIL,
+    PANDORA_PAIRING_REQUIRED_DETAIL,
+    PANDORA_REMOTE_ACCESS_REQUIRED_DETAIL,
+    PANDORA_SESSION_COOKIE_NAME,
+    PANDORA_SESSION_COOKIE_PATH,
+    PandoraDeviceLimitError,
+    PandoraPairRequest,
+    PandoraPairingRejectedError,
+    PandoraSessionManager,
+    request_pandora_session_token,
+)
 from app.supervisor.service import SupervisorService
 from app.tools.base import ToolError
 from app.tools.registry import build_default_tool_registry
@@ -143,6 +157,7 @@ async def lifespan(app: FastAPI):
     )
 
     app.state.settings = settings
+    app.state.pandora_sessions = PandoraSessionManager()
     app.state.store = store
     app.state.registry = registry
     app.state.catalog = catalog
@@ -178,6 +193,35 @@ app = FastAPI(
 )
 
 
+_PANDORA_PUBLIC_PATHS = frozenset(
+    {
+        "/pandora",
+        "/pandora-sw.js",
+        "/v1/pandora/status",
+        "/v1/pandora/pair",
+    }
+)
+
+
+def _pandora_sessions(app: FastAPI) -> PandoraSessionManager:
+    manager = getattr(app.state, "pandora_sessions", None)
+    if manager is None:
+        manager = PandoraSessionManager()
+        app.state.pandora_sessions = manager
+    return manager
+
+
+def _is_public_pandora_path(path: str) -> bool:
+    return (
+        path in _PANDORA_PUBLIC_PATHS
+        or path.startswith("/static/pandora/")
+    )
+
+
+def _is_pandora_api_path(path: str) -> bool:
+    return path.startswith("/v1/pandora/")
+
+
 @app.middleware("http")
 async def enforce_http_access_security(
     request: Request,
@@ -188,12 +232,18 @@ async def enforce_http_access_security(
         settings = get_settings()
 
     local_request = is_local_http_request(request)
+    manager = _pandora_sessions(request.app)
+    request.state.local_http_request = local_request
+    request.state.prometheus_full_access = False
+    request.state.pandora_session = None
+
     if not settings.http_remote_access_enabled:
         if not local_request:
             return JSONResponse(
                 status_code=403,
                 content={"detail": REMOTE_ACCESS_DISABLED_DETAIL},
             )
+        request.state.prometheus_full_access = True
         if (
             csrf_protection_required(request)
             and not request_has_valid_csrf_header(request)
@@ -215,10 +265,32 @@ async def enforce_http_access_security(
             },
         )
 
-    if not request_has_valid_http_credentials(
+    path = request.url.path
+    full_access = request_has_valid_http_credentials(
         request,
         expected_token=expected_token,
+    )
+    pandora_session = None
+    if _is_pandora_api_path(path):
+        pandora_session = manager.session_for_token(
+            request_pandora_session_token(request)
+        )
+
+    public_pandora_request = _is_public_pandora_path(path)
+    local_pairing_bootstrap = (
+        path == "/v1/pandora/pairing-code" and local_request
+    )
+    if not (
+        full_access
+        or pandora_session is not None
+        or public_pandora_request
+        or local_pairing_bootstrap
     ):
+        if _is_pandora_api_path(path):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": PANDORA_PAIRING_REQUIRED_DETAIL},
+            )
         return JSONResponse(
             status_code=401,
             content={"detail": HTTP_AUTH_REQUIRED_DETAIL},
@@ -236,6 +308,8 @@ async def enforce_http_access_security(
             content={"detail": CSRF_REQUIRED_DETAIL},
         )
 
+    request.state.prometheus_full_access = full_access
+    request.state.pandora_session = pandora_session
     return await call_next(request)
 
 
@@ -321,12 +395,121 @@ async def pandora_service_worker() -> FileResponse:
 
 
 @app.get("/v1/pandora/status", tags=["system"])
-async def pandora_status() -> dict[str, str]:
-    return {
-        "service": "prometheus",
-        "status": "ok",
-        "pandora_voice": "pending",
-    }
+async def pandora_status(request: Request) -> JSONResponse:
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        settings = get_settings()
+
+    if request.state.prometheus_full_access:
+        authentication = "prometheus"
+    elif request.state.pandora_session is not None:
+        authentication = "pandora"
+    else:
+        authentication = "required"
+
+    return JSONResponse(
+        content={
+            "service": "prometheus",
+            "status": "ok",
+            "pandora_voice": "pending",
+            "authentication": authentication,
+            "remote_access": (
+                "enabled"
+                if settings.http_remote_access_enabled
+                else "disabled"
+            ),
+            "pairing_code_allowed": bool(
+                settings.http_remote_access_enabled
+                and request.state.local_http_request
+            ),
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/v1/pandora/pairing-code", tags=["system"])
+async def create_pandora_pairing_code(request: Request) -> JSONResponse:
+    settings = getattr(request.app.state, "settings", None)
+    if settings is None:
+        settings = get_settings()
+
+    if not request.state.local_http_request:
+        raise HTTPException(
+            status_code=403,
+            detail=PANDORA_PAIRING_LOCAL_ONLY_DETAIL,
+        )
+    if not settings.http_remote_access_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail=PANDORA_REMOTE_ACCESS_REQUIRED_DETAIL,
+        )
+
+    manager = _pandora_sessions(request.app)
+    code = manager.issue_pairing_code()
+    return JSONResponse(
+        content={
+            "code": code,
+            "expires_in": manager.pairing_ttl_seconds,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/v1/pandora/pair", tags=["system"])
+async def pair_pandora_device(
+    payload: PandoraPairRequest,
+    request: Request,
+) -> JSONResponse:
+    manager = _pandora_sessions(request.app)
+    try:
+        token = manager.create_session(
+            code=payload.code,
+            device_name=payload.device_name,
+        )
+    except PandoraPairingRejectedError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_INVALID_DETAIL,
+        ) from exc
+    except PandoraDeviceLimitError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=PANDORA_DEVICE_LIMIT_DETAIL,
+        ) from exc
+
+    response = JSONResponse(
+        content={
+            "authentication": "pandora",
+            "expires_in": manager.session_ttl_seconds,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+    response.set_cookie(
+        key=PANDORA_SESSION_COOKIE_NAME,
+        value=token,
+        max_age=manager.session_ttl_seconds,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="strict",
+        path=PANDORA_SESSION_COOKIE_PATH,
+    )
+    return response
+
+
+@app.post("/v1/pandora/logout", status_code=204, tags=["system"])
+async def logout_pandora_device(request: Request) -> Response:
+    manager = _pandora_sessions(request.app)
+    manager.revoke(request_pandora_session_token(request))
+    response = Response(
+        status_code=204,
+        headers={"Cache-Control": "no-store"},
+    )
+    response.delete_cookie(
+        key=PANDORA_SESSION_COOKIE_NAME,
+        path=PANDORA_SESSION_COOKIE_PATH,
+        samesite="strict",
+    )
+    return response
 
 
 @app.get("/arena", response_class=HTMLResponse, tags=["arena"])

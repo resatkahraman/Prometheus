@@ -38,6 +38,8 @@ async def test_pandora_page_is_installable_and_honest() -> None:
         'href="/static/pandora/app.css"',
         'src="/static/pandora/app.js"',
         "Pandora hazırlanıyor",
+        "Pandora eşleştirme",
+        "Gerçek sohbet",
         "Sesli görüşme, yerel ses motoru doğrulandıktan sonra açılacak.",
     ):
         assert marker in html
@@ -76,12 +78,23 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
     payload = response.json()
 
     assert response.status_code == 200
-    assert set(payload) == {"service", "status", "pandora_voice"}
+    assert set(payload) == {
+        "service",
+        "status",
+        "pandora_voice",
+        "authentication",
+        "remote_access",
+        "pairing_code_allowed",
+    }
     assert payload == {
         "service": "prometheus",
         "status": "ok",
         "pandora_voice": "pending",
+        "authentication": "prometheus",
+        "remote_access": "disabled",
+        "pairing_code_allowed": False,
     }
+    assert response.headers["cache-control"] == "no-store"
     serialized = response.text.casefold()
     for forbidden in ("workspace", "provider", "model", "token", "tool", "agent", ":\\", "/users/"):
         assert forbidden not in serialized
@@ -94,5 +107,9 @@ def test_pandora_javascript_uses_safe_browser_primitives() -> None:
         assert forbidden not in source
     assert "textContent" in source
     assert 'const PROMETHEUS_CSRF_HEADER = "X-Prometheus-CSRF"' in source
-    assert 'const PROMETHEUS_CSRF_VALUE = "prometheus-browser-ui"' in source
+    assert 'const PROMETHEUS_CSRF_VALUE = "1"' in source
     assert 'const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])' in source
+    assert '"/v1/pandora/pairing-code"' in source
+    assert '"/v1/pandora/pair"' in source
+    assert '"/v1/pandora/logout"' in source
+    assert 'credentials: "same-origin"' in source
