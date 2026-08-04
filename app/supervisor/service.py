@@ -34,8 +34,10 @@ from app.core.schemas import (
     ProjectRunHistoryTaskSummary,
     ProjectRunRetryRequest,
     ProjectRunRetryResponse,
+    ProjectRunGitStatus,
 )
 from app.supervisor.run_snapshots import RunSnapshotManager
+from app.supervisor.git_runs import GitRunManager
 from app.workspace.policy import WorkspacePolicy
 from app.tools.base import ToolError
 from app.memory.attention import AttentionBroker
@@ -98,6 +100,11 @@ class SupervisorService:
         self.settings = settings
         self.workspace = WorkspacePolicy(
             root=settings.workspace_root,
+            max_file_bytes=settings.workspace_max_file_bytes,
+            max_search_results=settings.workspace_max_search_results,
+        )
+        self.git_run_manager = GitRunManager(
+            workspace_root=settings.workspace_root,
             max_file_bytes=settings.workspace_max_file_bytes,
             max_search_results=settings.workspace_max_search_results,
         )
@@ -865,6 +872,21 @@ class SupervisorService:
             for task in command.tasks
         ):
             command.status = "completed"
+            try:
+                git_st = self.git_run_manager.finalize_successful_run(command=command)
+                if git_st.commit_created:
+                    self._event(
+                        command,
+                        type="project_run_git_commit_created",
+                        message=f"Git commit '{git_st.commit_hash[:8]}' oluşturuldu.",
+                        data={
+                            "commit_hash": git_st.commit_hash,
+                            "commit_message": git_st.commit_message,
+                            "run_branch": git_st.run_branch,
+                        },
+                    )
+            except Exception:
+                pass
         elif any(task.status == "awaiting_approval" for task in command.tasks):
             command.status = "awaiting_approval"
         elif any(task.status == "reviewing" for task in command.tasks):
@@ -6916,6 +6938,33 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             "Exact user approval will be required before any execution."
         )
 
+        git_is_repository = False
+        git_base_branch = None
+        git_base_head = None
+        git_worktree_clean = None
+        git_branch_name = None
+        git_warnings: list[str] = []
+
+        if request.execution_mode == "isolated_branch":
+            # Compute seed for deterministic branch name if not explicitly provided
+            seed_raw = f"{rel_path}:{request.goal}"
+            seed_hash = hashlib.sha256(seed_raw.encode("utf-8")).hexdigest()
+
+            git_status = self.git_run_manager.inspect_project(
+                workspace_path=rel_path if rel_path else ".",
+                requested_branch_name=request.branch_name,
+                goal=request.goal,
+                seed_hash=seed_hash,
+            )
+            git_is_repository = git_status.is_repository
+            git_base_branch = git_status.base_branch
+            git_base_head = git_status.base_head
+            git_worktree_clean = git_status.worktree_clean
+            git_branch_name = git_status.run_branch
+            git_warnings.append(
+                f"Isolated branch '{git_branch_name}' will be created only after approval before initial execution."
+            )
+
         res = ProjectRunPreviewResponse(
             goal=request.goal,
             workspace_path=rel_path if rel_path else ".",
@@ -6927,6 +6976,13 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             model_calls=0,
             total_tokens=0,
             side_effect_free=True,
+            execution_mode=request.execution_mode,
+            git_is_repository=git_is_repository,
+            git_base_branch=git_base_branch,
+            git_base_head=git_base_head,
+            git_worktree_clean=git_worktree_clean,
+            git_branch_name=git_branch_name,
+            git_warnings=git_warnings,
         )
         res.preview_digest = self._project_run_preview_digest(res)
         return res
@@ -6953,6 +7009,10 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             "verification_commands": list(preview.verification_commands),
             "requires_approval": preview.requires_approval,
             "side_effect_free": preview.side_effect_free,
+            "execution_mode": preview.execution_mode,
+            "git_base_branch": preview.git_base_branch,
+            "git_base_head": preview.git_base_head,
+            "git_branch_name": preview.git_branch_name,
         }
         canonical_json = json.dumps(
             authoritative_payload,
@@ -6980,6 +7040,8 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         preview_req = ProjectRunPreviewRequest(
             goal=request.goal,
             workspace_path=request.workspace_path,
+            execution_mode=request.execution_mode,
+            branch_name=request.branch_name,
         )
         preview = await self.preview_project_run(preview_req)
 
@@ -7012,6 +7074,12 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                     total_tokens=0,
                     execution_started=False,
                     created=False,
+                    execution_mode=preview.execution_mode,
+                    git_base_branch=preview.git_base_branch,
+                    git_base_head=preview.git_base_head,
+                    git_branch_name=preview.git_branch_name,
+                    git_branch_created=cmd.project_run_git_branch_created,
+                    git_commit_hash=cmd.project_run_git_commit_hash,
                 )
 
         active = await self._active_command()
@@ -7067,6 +7135,12 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             execution_layers=[task_ids],
             project_run_preview_digest=preview.preview_digest,
             project_run_workspace_path=preview.workspace_path,
+            project_run_execution_mode=preview.execution_mode,
+            project_run_git_base_branch=preview.git_base_branch,
+            project_run_git_base_head=preview.git_base_head,
+            project_run_git_branch_name=preview.git_branch_name,
+            project_run_git_branch_created=False,
+            project_run_git_commit_hash=None,
         )
 
         self._event(
@@ -7106,6 +7180,23 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         command: SupervisorCommand,
         task: SupervisorTask,
     ) -> None:
+        if getattr(command, "project_run_execution_mode", "workspace") == "isolated_branch":
+            was_created = getattr(command, "project_run_git_branch_created", False)
+            git_st = self.git_run_manager.prepare_run_branch(command=command)
+            if git_st.branch_created and not was_created:
+                command.project_run_git_branch_created = True
+                self._event(
+                    command,
+                    type="project_run_git_branch_created",
+                    message=f"Isolated branch '{git_st.run_branch}' oluşturuldu ve switch edildi.",
+                    data={
+                        "base_branch": git_st.base_branch,
+                        "base_head": git_st.base_head,
+                        "run_branch": git_st.run_branch,
+                        "execution_started": True,
+                    },
+                )
+
         try:
             workspace_path = getattr(command, "project_run_workspace_path", ".") or "."
             self.snapshot_manager.capture_task_snapshot(
@@ -7173,6 +7264,8 @@ RET verirsen somut yeniden çalışma görevini yaz."""
 
         delivery_summary = getattr(command, "last_answer", None) or f"Komut durumu: {command.status}"
 
+        git_status = self.git_run_manager.get_status(command=command)
+
         return RunChangeReviewResponse(
             command_id=command.id,
             status=command.status,
@@ -7186,7 +7279,17 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             delivery_summary=delivery_summary,
             can_revert=can_revert,
             revert_confirmation=f"REVERT {command.id}",
+            git=git_status,
         )
+
+    async def get_project_run_git_status(
+        self,
+        command_id: str,
+    ) -> ProjectRunGitStatus:
+        command = await self.store.get(command_id)
+        if not command:
+            raise KeyError(f"Command '{command_id}' bulunamadı.")
+        return self.git_run_manager.get_status(command=command)
 
     async def revert_command_changes(
         self,
@@ -7388,6 +7491,9 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                     output_tokens=output_tokens,
                     last_event=last_event,
                     tasks=task_summaries,
+                    execution_mode=getattr(cmd, "project_run_execution_mode", "workspace"),
+                    git_branch_name=getattr(cmd, "project_run_git_branch_name", None),
+                    git_commit_hash=getattr(cmd, "project_run_git_commit_hash", None),
                 )
             )
 

@@ -62,6 +62,7 @@ from app.core.schemas import (
     ProjectRunPreviewResponse,
     ProjectRunCommitRequest,
     ProjectRunCommitResponse,
+    ProjectRunGitStatus,
     RunChangeReviewResponse,
     RunRevertRequest,
     RunRevertResponse,
@@ -909,6 +910,22 @@ async def revert_supervisor_command_changes(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/git-status",
+    response_model=ProjectRunGitStatus,
+    tags=["supervisor"],
+)
+async def read_supervisor_project_run_git_status(
+    command_id: str,
+) -> ProjectRunGitStatus:
+    try:
+        return await app.state.supervisor.get_project_run_git_status(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Komut bulunamadı.") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get(

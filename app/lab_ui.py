@@ -562,6 +562,17 @@ LAB_UI = r"""<!doctype html>
                 <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Workspace Path:</label>
                 <input type="text" id="projectRunWorkspace" value="." style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-family:'JetBrains Mono', monospace; font-size:13px;" />
               </div>
+              <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px; align-items:center;">
+                <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Execution Mode:</label>
+                <select id="projectRunExecutionMode" onchange="clearProjectRunPreview()" style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-family:inherit; font-size:13px;">
+                  <option value="workspace">Workspace</option>
+                  <option value="isolated_branch">Isolated Git branch</option>
+                </select>
+              </div>
+              <div style="display:grid; grid-template-columns: 160px 1fr; gap:12px; align-items:center;">
+                <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Branch Name:</label>
+                <input type="text" id="projectRunBranchName" placeholder="Auto: prometheus/run-…" oninput="clearProjectRunPreview()" style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:8px 12px; border-radius:8px; font-family:'JetBrains Mono', monospace; font-size:13px;" />
+              </div>
               <div style="display:flex; flex-direction:column; gap:6px;">
                 <label style="font-size:13px; font-weight:600; color:var(--text-dim);">Natural Language Goal:</label>
                 <textarea id="projectRunGoal" placeholder="Proje hedefini doğal dille açıkla..." style="background:rgba(0,0,0,0.3); border:1px solid var(--border); color:var(--text); padding:10px; border-radius:8px; min-height:70px; font-family:inherit; font-size:13px; resize:vertical;"></textarea>
@@ -589,6 +600,15 @@ LAB_UI = r"""<!doctype html>
                 <div id="projectRunUsage" style="font-size:12px; color:var(--text-dim); font-family:'JetBrains Mono', monospace; display:flex; gap:16px;">
                   <span>Model calls: 0</span>
                   <span>Total tokens: 0</span>
+                </div>
+
+                <div id="projectRunGitPreview" style="display:none; font-size:12px; background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.2); border-radius:6px; padding:10px; flex-direction:column; gap:4px;">
+                  <div style="font-weight:600; color:#93c5fd;">Git Isolation Preview</div>
+                  <div>Base Branch: <span id="projectRunGitBaseBranch" style="font-family:'JetBrains Mono', monospace; color:var(--text);"></span></div>
+                  <div>Base Commit: <span id="projectRunGitBaseHead" style="font-family:'JetBrains Mono', monospace; color:var(--text);"></span></div>
+                  <div>Worktree Clean: <span id="projectRunGitWorktree" style="font-weight:600;"></span></div>
+                  <div>Run Branch: <span id="projectRunGitRunBranch" style="font-family:'JetBrains Mono', monospace; color:#60a5fa; font-weight:600;"></span></div>
+                  <div style="font-size:11px; color:#93c5fd; margin-top:4px; font-style:italic;">Branch will be created only after approval</div>
                 </div>
 
                 <div style="display:flex; flex-direction:column; gap:6px;">
@@ -1559,11 +1579,15 @@ window.fetch=(input,init={})=>{
     async function previewProjectRun() {
       const workspaceInput = document.getElementById('projectRunWorkspace');
       const goalInput = document.getElementById('projectRunGoal');
+      const modeInput = document.getElementById('projectRunExecutionMode');
+      const branchInput = document.getElementById('projectRunBranchName');
       const btn = document.getElementById('projectRunPreviewBtn');
       const statusEl = document.getElementById('projectRunPreviewStatus');
       
       const goal = goalInput ? goalInput.value.trim() : '';
       const workspace_path = workspaceInput ? workspaceInput.value.trim() || '.' : '.';
+      const execution_mode = modeInput ? modeInput.value : 'workspace';
+      const branch_name = branchInput && branchInput.value.trim() ? branchInput.value.trim() : null;
 
       if (!goal || goal.length < 3) {
         if (statusEl) {
@@ -1586,7 +1610,7 @@ window.fetch=(input,init={})=>{
         const res = await fetch('/v1/supervisor/project-run/preview', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ goal, workspace_path })
+          body: JSON.stringify({ goal, workspace_path, execution_mode, branch_name })
         });
         
         const data = await res.json();
@@ -1626,6 +1650,7 @@ window.fetch=(input,init={})=>{
       const usageEl = document.getElementById('projectRunUsage');
       const gateEl = document.getElementById('projectRunApprovalGate');
       const commitBtn = document.getElementById('projectRunCommitBtn');
+      const gitPreviewEl = document.getElementById('projectRunGitPreview');
 
       if (!preview || !card) return;
       card.style.display = 'flex';
@@ -1642,6 +1667,26 @@ window.fetch=(input,init={})=>{
 
       if (usageEl) {
         usageEl.innerHTML = `<span>Model calls: ${preview.model_calls ?? 0}</span><span>Total tokens: ${preview.total_tokens ?? 0}</span>`;
+      }
+
+      if (gitPreviewEl) {
+        if (preview.execution_mode === 'isolated_branch') {
+          gitPreviewEl.style.display = 'flex';
+          const baseBrEl = document.getElementById('projectRunGitBaseBranch');
+          const baseHeadEl = document.getElementById('projectRunGitBaseHead');
+          const worktreeEl = document.getElementById('projectRunGitWorktree');
+          const runBrEl = document.getElementById('projectRunGitRunBranch');
+
+          if (baseBrEl) baseBrEl.textContent = preview.git_base_branch || '-';
+          if (baseHeadEl) baseHeadEl.textContent = preview.git_base_head ? preview.git_base_head.substring(0, 7) : '-';
+          if (worktreeEl) {
+            worktreeEl.textContent = preview.git_worktree_clean ? 'Clean' : 'Dirty';
+            worktreeEl.style.color = preview.git_worktree_clean ? '#34d399' : '#f87171';
+          }
+          if (runBrEl) runBrEl.textContent = preview.git_branch_name || '-';
+        } else {
+          gitPreviewEl.style.display = 'none';
+        }
       }
 
       if (tasksEl) {
@@ -1670,7 +1715,9 @@ window.fetch=(input,init={})=>{
 
       if (warningsEl) {
         const warns = preview.warnings || [];
-        warningsEl.innerText = warns.length > 0 ? warns.join('\n') : 'Uyarı bulunmuyor.';
+        const gitWarns = preview.git_warnings || [];
+        const allWarns = warns.concat(gitWarns);
+        warningsEl.innerText = allWarns.length > 0 ? allWarns.join('\n') : 'Uyarı bulunmuyor.';
       }
     }
 
@@ -1687,6 +1734,8 @@ window.fetch=(input,init={})=>{
     async function commitProjectRun() {
       const workspaceInput = document.getElementById('projectRunWorkspace');
       const goalInput = document.getElementById('projectRunGoal');
+      const modeInput = document.getElementById('projectRunExecutionMode');
+      const branchInput = document.getElementById('projectRunBranchName');
       const commitBtn = document.getElementById('projectRunCommitBtn');
       const statusEl = document.getElementById('projectRunCommitStatus');
       const outputCard = document.getElementById('projectRunCommittedCommand');
@@ -1701,6 +1750,8 @@ window.fetch=(input,init={})=>{
 
       const goal = goalInput ? goalInput.value.trim() : '';
       const workspace_path = workspaceInput ? workspaceInput.value.trim() || '.' : '.';
+      const execution_mode = modeInput ? modeInput.value : 'workspace';
+      const branch_name = branchInput && branchInput.value.trim() ? branchInput.value.trim() : null;
 
       if (commitBtn) {
         commitBtn.disabled = true;
@@ -1725,7 +1776,9 @@ window.fetch=(input,init={})=>{
             preview_digest: latestProjectRunPreview.preview_digest,
             autonomy_mode: 'task',
             background: true,
-            force_new: false
+            force_new: false,
+            execution_mode: execution_mode,
+            branch_name: branch_name
           })
         });
 
@@ -1771,6 +1824,39 @@ window.fetch=(input,init={})=>{
       }
     }
 
+    async function loadProjectRunGitStatus(commandId) {
+      if (!commandId) return;
+      try {
+        const res = await fetch(`/v1/supervisor/commands/${commandId}/git-status`);
+        if (!res.ok) return;
+        const status = await res.json();
+        renderProjectRunGitStatus(status);
+      } catch (err) {
+        console.error("Git status yüklenemedi:", err);
+      }
+    }
+
+    function renderProjectRunGitStatus(status) {
+      const statusEl = document.getElementById("projectRunGitStatus");
+      if (!statusEl || !status) return;
+
+      if (status.execution_mode === "isolated_branch") {
+        statusEl.style.display = "flex";
+        statusEl.innerHTML = `
+          <div style="font-weight:600; color:#93c5fd;">Git Isolation Status</div>
+          <div>Run Branch: <span style="font-family:'JetBrains Mono', monospace; color:#60a5fa;">${escapeHtml(status.run_branch || '-')}</span></div>
+          <div>Branch Created: <span>${status.branch_created ? 'Yes' : 'No'}</span></div>
+          <div>Current Branch: <span style="font-family:'JetBrains Mono', monospace;">${escapeHtml(status.current_branch || '-')}</span></div>
+          <div>Commit Created: <span>${status.commit_created ? 'Yes' : 'No'}</span></div>
+          <div>Commit Hash: <span id="projectRunGitCommit" style="font-family:'JetBrains Mono', monospace;">${escapeHtml(status.commit_hash ? status.commit_hash.substring(0, 7) : 'None')}</span></div>
+          <div>Remote Pushed: <span>${status.pushed ? 'Yes' : 'No (Local only)'}</span></div>
+          <div>Merged to Base: <span>${status.merged ? 'Yes' : 'No'}</span></div>
+        `;
+      } else {
+        statusEl.style.display = "none";
+      }
+    }
+
     async function loadProjectRunChangeReview(commandId) {
       if (!commandId) return;
       try {
@@ -1778,6 +1864,9 @@ window.fetch=(input,init={})=>{
         if (!res.ok) return;
         const review = await res.json();
         renderProjectRunChangeReview(review);
+        if (review.git) {
+          renderProjectRunGitStatus(review.git);
+        }
       } catch (err) {
         console.error("Change review yüklenemedi:", err);
       }
@@ -2161,6 +2250,18 @@ window.fetch=(input,init={})=>{
           const callsStat = document.createElement("span");
           callsStat.textContent = `Calls: ${item.model_calls}`;
           metaRow.appendChild(callsStat);
+        }
+
+        if (item.git_branch_name) {
+          const gitStat = document.createElement("span");
+          gitStat.style.fontFamily = "'JetBrains Mono', monospace";
+          gitStat.style.color = "#93c5fd";
+          let gitText = `Branch: ${item.git_branch_name}`;
+          if (item.git_commit_hash) {
+            gitText += ` (${item.git_commit_hash.substring(0, 7)})`;
+          }
+          gitStat.textContent = gitText;
+          metaRow.appendChild(gitStat);
         }
 
         if (item.created_at) {

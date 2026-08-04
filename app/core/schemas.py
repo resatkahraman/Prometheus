@@ -380,9 +380,27 @@ class SupervisorApprovalRequest(BaseModel):
     background: bool = True
 
 
+class ProjectRunGitStatus(BaseModel):
+    execution_mode: Literal["workspace", "isolated_branch"] = "workspace"
+    is_repository: bool = False
+    base_branch: str | None = None
+    base_head: str | None = None
+    run_branch: str | None = None
+    branch_created: bool = False
+    current_branch: str | None = None
+    worktree_clean: bool | None = None
+    commit_created: bool = False
+    commit_hash: str | None = None
+    commit_message: str | None = None
+    pushed: bool = False
+    merged: bool = False
+
+
 class ProjectRunPreviewRequest(BaseModel):
     goal: str = Field(min_length=3, max_length=4000)
     workspace_path: str = Field(default=".", max_length=1000)
+    execution_mode: Literal["workspace", "isolated_branch"] = "workspace"
+    branch_name: str | None = None
 
     @model_validator(mode="after")
     def validate_preview_fields(self):
@@ -395,6 +413,22 @@ class ProjectRunPreviewRequest(BaseModel):
         if not stripped_path:
             stripped_path = "."
         self.workspace_path = stripped_path
+
+        if self.branch_name:
+            bn = self.branch_name.strip()
+            if not bn:
+                self.branch_name = None
+            else:
+                if len(bn) > 120:
+                    raise ValueError("Branch adı en fazla 120 karakter olabilir.")
+                forbidden = ["refs/", "..", "~", "^", ":", "?", "*", "[", "\\"]
+                if any(f in bn for f in forbidden):
+                    raise ValueError(f"Branch adı geçersiz karakterler içeriyor: '{bn}'")
+                if bn.startswith("/") or bn.endswith("/") or bn.startswith(".") or bn.endswith("."):
+                    raise ValueError("Branch adı '/' veya '.' ile başlayamaz/bitemez.")
+                if "//" in bn or bn.endswith(".lock"):
+                    raise ValueError("Branch adı ardışık '//' veya '.lock' son eki içeremez.")
+                self.branch_name = bn
         return self
 
 
@@ -418,6 +452,13 @@ class ProjectRunPreviewResponse(BaseModel):
     total_tokens: int = 0
     side_effect_free: bool = True
     preview_digest: str = ""
+    execution_mode: Literal["workspace", "isolated_branch"] = "workspace"
+    git_is_repository: bool = False
+    git_base_branch: str | None = None
+    git_base_head: str | None = None
+    git_worktree_clean: bool | None = None
+    git_branch_name: str | None = None
+    git_warnings: list[str] = Field(default_factory=list)
 
 
 class ProjectRunCommitRequest(BaseModel):
@@ -427,6 +468,8 @@ class ProjectRunCommitRequest(BaseModel):
     autonomy_mode: AutonomyMode = "task"
     background: bool = True
     force_new: bool = False
+    execution_mode: Literal["workspace", "isolated_branch"] = "workspace"
+    branch_name: str | None = None
 
     @model_validator(mode="after")
     def validate_commit_fields(self):
@@ -439,6 +482,10 @@ class ProjectRunCommitRequest(BaseModel):
         if not stripped_path:
             stripped_path = "."
         self.workspace_path = stripped_path
+
+        if self.branch_name:
+            bn = self.branch_name.strip()
+            self.branch_name = bn if bn else None
         return self
 
 
@@ -455,6 +502,12 @@ class ProjectRunCommitResponse(BaseModel):
     total_tokens: int = 0
     execution_started: bool = False
     created: bool
+    execution_mode: Literal["workspace", "isolated_branch"] = "workspace"
+    git_base_branch: str | None = None
+    git_base_head: str | None = None
+    git_branch_name: str | None = None
+    git_branch_created: bool = False
+    git_commit_hash: str | None = None
 
 
 class RunFileChange(BaseModel):
@@ -484,6 +537,7 @@ class RunChangeReviewResponse(BaseModel):
     delivery_summary: str | None = None
     can_revert: bool
     revert_confirmation: str
+    git: ProjectRunGitStatus | None = None
 
 
 class RunRevertRequest(BaseModel):
@@ -565,6 +619,9 @@ class ProjectRunHistoryItem(BaseModel):
     output_tokens: int
     last_event: str | None = None
     tasks: list[ProjectRunHistoryTaskSummary] = Field(default_factory=list)
+    execution_mode: str = "workspace"
+    git_branch_name: str | None = None
+    git_commit_hash: str | None = None
 
 
 class ProjectRunHistoryResponse(BaseModel):

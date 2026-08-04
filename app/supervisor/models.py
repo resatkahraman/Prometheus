@@ -199,6 +199,13 @@ class SupervisorCommand(BaseModel):
     archived_at: str | None = None
     project_run_preview_digest: str | None = None
     project_run_workspace_path: str | None = None
+    project_run_execution_mode: str = "workspace"
+    project_run_git_base_branch: str | None = None
+    project_run_git_base_head: str | None = None
+    project_run_git_branch_name: str | None = None
+    project_run_git_branch_created: bool = False
+    project_run_git_commit_hash: str | None = None
+    project_run_git_commit_message: str | None = None
 
     active_operation: str | None = None
     operation_phase: str | None = None
