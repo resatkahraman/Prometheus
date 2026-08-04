@@ -1,0 +1,17 @@
+{
+  "voice_name": "Pandora",
+  "voice_design": {
+    "model_id": "openbmb/VoxCPM2",
+    "revision": "bffb3df5a29440629464e5e839f4d214c8714c3d",
+    "license": "Apache-2.0",
+    "runtime_location": "free_gpu_voice_design_only"
+  },
+  "production_runtime": {
+    "engine": "chatterbox_multilingual_v3",
+    "model_id": "ResembleAI/chatterbox",
+    "revision": "e2d6902dd4c1301892935d0a0277325551e8060e",
+    "package_version": "0.1.7",
+    "license": "MIT",
+    "language": "tr"
+  }
+}

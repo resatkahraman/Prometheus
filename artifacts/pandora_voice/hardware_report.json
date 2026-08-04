@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-08-03T16:33:00Z",
+  "os": "Microsoft Windows 11 Education",
+  "os_version": "10.0.26200",
+  "cpu": "11th Gen Intel(R) Core(TM) i7-11800H @ 2.30GHz",
+  "cpu_cores": 8,
+  "cpu_threads": 16,
+  "ram_bytes": 16911503360,
+  "ram_gb": 15.75,
+  "gpu": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "gpu_dedicated_vram_mib": 4096,
+  "gpu_driver": "591.59",
+  "cuda_version": "13.1",
+  "disk_c_free_bytes": 58486906880,
+  "disk_c_free_gb": 54.48,
+  "manufacturer": "MONSTER",
+  "model": "ABRA A5 V18.2",
+  "dxdiag_match": true
+}

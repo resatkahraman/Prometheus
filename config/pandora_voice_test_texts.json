@@ -1,0 +1,20 @@
+{
+  "version": "2.0.0",
+  "language": "tr",
+  "reference_text": "Merhaba, ben Pandora. Canlı, sıcak ve güven veren sesimle bugün senin için buradayım. Birlikte başlayalım.",
+  "test_categories": {
+    "01_greeting": "Merhaba! Ben Pandora. Bugün senin için ne yapabilirim?",
+    "02_weather": "İstanbul'da hava bugün değişken. Akşam saatlerinde yağmur ihtimali yükseliyor; dışarı çıkarken şemsiyeni almanı öneririm.",
+    "03_news": "Bugünün teknoloji gündeminde üç önemli gelişme var. Önce en güncel ve doğrulanmış haberle başlayalım.",
+    "04_technical_success": "Görev tamamlandı. Dört dosya değiştirildi ve tüm doğrulama testleri başarıyla geçti.",
+    "05_security_warning": "Bu işlem bilgisayarındaki dosyaları değiştirecek. Devam etmek için ekrandaki onay düğmesine dokunmalısın.",
+    "06_numbers_dates": "Bugün 3 Ağustos 2026. Saat 18.45. Toplam 478 testin 478'i başarıyla geçti.",
+    "07_mixed_turkish_english": "FastAPI endpoint'i hazır. Git branch adı task-035a-pandora-local-voice ve doğrulama komutu python tire m pytest.",
+    "08_long_form": "Prometheus Core, yazılım geliştirme görevlerini güvenli ve izlenebilir biçimde yönetmek için tasarlanmıştır. Pandora ise bu çekirdeğin mobil ve sesli arayüzüdür. Günlük sorulara doğal biçimde yanıt verir, güncel bilgileri kaynaklarıyla özetler ve teknik görevlerde yapılacak değişiklikleri önce açıkça anlatır. Dosya değiştiren veya komut çalıştıran işlemler yalnızca ekrandaki güvenli onaydan sonra ilerler. Böylece konuşmanın rahatlığı korunurken kritik eylemlerde denetim her zaman kullanıcıda kalır. Uzun bir işlem tamamlandığında Pandora önce kısa bir sesli özet verir, ayrıntıları ekranda gösterir ve başarısız olan doğrulamaları saklamadan bildirir."
+  },
+  "candidate_count": 12,
+  "seed_range": [
+    42,
+    53
+  ]
+}
