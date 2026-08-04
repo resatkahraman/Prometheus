@@ -77,7 +77,7 @@ PANDORA_UI = """<!doctype html>
         </form>
 
         <div id="paired-session" hidden>
-          <p>Bu cihaz, sınırlı Pandora oturumuyla Prometheus'a bağlı.</p>
+          <p>Bu cihaz, yalnız Pandora metin sohbetine yetkili güvenli bir oturumla bağlı.</p>
           <button id="pandora-logout" class="secondary-action" type="button">
             Bu cihazın bağlantısını kes
           </button>
@@ -95,13 +95,14 @@ PANDORA_UI = """<!doctype html>
         </div>
       </section>
 
-      <section class="welcome-card" aria-labelledby="welcome-title">
+      <section id="welcome-card" class="welcome-card" aria-labelledby="welcome-title">
         <div class="orb" aria-hidden="true"></div>
         <p class="eyebrow">Mobil çalışma alanı</p>
-        <h2 id="welcome-title">Pandora hazırlanıyor</h2>
+        <h2 id="welcome-title">Pandora bağlantı bekliyor</h2>
         <p>
-          Güvenli mobil bağlantı ve cihaz oturumu hazırlandı. Gerçek sohbet
-          bir sonraki aşamada bu sınırlı Pandora oturumu üzerinden açılacak.
+          Güvenli cihaz eşleştirmesi tamamlandığında gerçek metin sohbeti bu
+          ekranda açılacak. Pandora oturumu genel Prometheus API'sine veya
+          Project Run işlemlerine yetki vermez.
         </p>
         <button class="microphone" type="button" disabled aria-describedby="voice-note">
           <span aria-hidden="true">●</span>
@@ -109,11 +110,57 @@ PANDORA_UI = """<!doctype html>
         </button>
         <p id="voice-note" class="voice-note">Sesli görüşme, yerel ses motoru doğrulandıktan sonra açılacak.</p>
       </section>
+
+      <section id="chat-card" class="chat-card" aria-labelledby="chat-title" hidden>
+        <header class="chat-header">
+          <div>
+            <p class="eyebrow">Güvenli mobil sohbet</p>
+            <h2 id="chat-title">Pandora metin sohbeti</h2>
+          </div>
+          <span class="chat-scope">Sohbet-only</span>
+        </header>
+
+        <div
+          id="chat-messages"
+          class="chat-messages"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-label="Pandora konuşması"
+        ></div>
+
+        <form id="chat-form" class="chat-composer" novalidate>
+          <label class="visually-hidden" for="chat-input">Pandora'ya mesaj yaz</label>
+          <textarea
+            id="chat-input"
+            name="message"
+            rows="2"
+            maxlength="4000"
+            enterkeyhint="send"
+            autocomplete="off"
+            placeholder="Pandora'ya yaz..."
+            required
+          ></textarea>
+          <div class="composer-footer">
+            <span id="chat-counter" class="chat-counter" aria-live="off">0/4000</span>
+            <button id="chat-submit" class="primary-action chat-submit" type="submit">Gönder</button>
+          </div>
+          <p id="chat-feedback" class="support-note" role="status" aria-live="polite"></p>
+        </form>
+
+        <div class="voice-reserved" aria-label="Ses özelliği durumu">
+          <button class="microphone" type="button" disabled aria-describedby="chat-voice-note">
+            <span aria-hidden="true">●</span>
+            Mikrofon kapalı
+          </button>
+          <p id="chat-voice-note" class="voice-note">Sesli görüşme bu görev kapsamında açılmadı.</p>
+        </div>
+      </section>
     </main>
 
     <nav class="bottom-nav" aria-label="Ana navigasyon">
       <a class="nav-item active" href="/pandora" aria-current="page">
-        <span>Sohbet</span><small>Hazırlanıyor</small>
+        <span>Sohbet</span><small>Metin hazır</small>
       </a>
       <span class="nav-item disabled" aria-disabled="true">
         <span>Görevler</span><small>Yakında</small>

@@ -37,9 +37,12 @@ async def test_pandora_page_is_installable_and_honest() -> None:
         'name="apple-mobile-web-app-title"',
         'href="/static/pandora/app.css"',
         'src="/static/pandora/app.js"',
-        "Pandora hazırlanıyor",
+        "Pandora bağlantı bekliyor",
         "Pandora eşleştirme",
-        "Gerçek sohbet",
+        "Pandora metin sohbeti",
+        'id="chat-form"',
+        'maxlength="4000"',
+        "Project Run işlemlerine yetki vermez",
         "Sesli görüşme, yerel ses motoru doğrulandıktan sonra açılacak.",
     ):
         assert marker in html
@@ -67,6 +70,7 @@ async def test_service_worker_has_root_scope_and_safe_cache_rules() -> None:
     assert response.status_code == 200
     assert response.headers["service-worker-allowed"] == "/"
     source = response.text
+    assert 'const CACHE_NAME = "pandora-shell-v3"' in source
     assert 'startsWith("/v1/")' in source
     assert 'request.method !== "GET"' in source
     assert 'request.headers.has("Authorization")' in source
@@ -82,6 +86,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "service",
         "status",
         "pandora_voice",
+        "pandora_chat",
         "authentication",
         "remote_access",
         "pairing_code_allowed",
@@ -90,6 +95,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "service": "prometheus",
         "status": "ok",
         "pandora_voice": "pending",
+        "pandora_chat": "ready",
         "authentication": "prometheus",
         "remote_access": "disabled",
         "pairing_code_allowed": False,
@@ -112,4 +118,8 @@ def test_pandora_javascript_uses_safe_browser_primitives() -> None:
     assert '"/v1/pandora/pairing-code"' in source
     assert '"/v1/pandora/pair"' in source
     assert '"/v1/pandora/logout"' in source
+    assert '"/v1/pandora/chat"' in source
+    assert "const CHAT_MESSAGE_MAX_CHARS = 4000" in source
+    assert "const CHAT_HISTORY_MAX_MESSAGES = 12" in source
+    assert "document.createElement" in source
     assert 'credentials: "same-origin"' in source

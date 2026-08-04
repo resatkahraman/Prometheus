@@ -39,6 +39,7 @@ from app.core.config import get_settings
 from app.core.schemas import (
     AgentRequest,
     AgentResponse,
+    ChatMessage,
     HealthResponse,
     ModelCatalogResponse,
     OperationsStatusResponse,
@@ -102,6 +103,9 @@ from app.security.network import (
     is_local_http_request,
 )
 from app.security.pandora import (
+    PANDORA_CHAT_BUSY_DETAIL,
+    PANDORA_CHAT_RATE_LIMIT_DETAIL,
+    PANDORA_CHAT_UNAVAILABLE_DETAIL,
     PANDORA_DEVICE_LIMIT_DETAIL,
     PANDORA_PAIRING_INVALID_DETAIL,
     PANDORA_PAIRING_LOCAL_ONLY_DETAIL,
@@ -109,6 +113,10 @@ from app.security.pandora import (
     PANDORA_REMOTE_ACCESS_REQUIRED_DETAIL,
     PANDORA_SESSION_COOKIE_NAME,
     PANDORA_SESSION_COOKIE_PATH,
+    PandoraChatBusyError,
+    PandoraChatRateLimitError,
+    PandoraChatRequest,
+    PandoraChatResponse,
     PandoraDeviceLimitError,
     PandoraPairRequest,
     PandoraPairingRejectedError,
@@ -190,6 +198,17 @@ app = FastAPI(
         "sahip çok modelli geliştirme sistemi."
     ),
     lifespan=lifespan,
+)
+
+
+_PANDORA_CHAT_SYSTEM_PROMPT = (
+    "Sen Prometheus'un mobil metin asistanı Pandora'sın. Kullanıcıya doğru, "
+    "açık ve uygulanabilir yanıtlar ver; bilmediğin bilgileri uydurma. Bu "
+    "kanal yalnızca konuşma yanıtı üretir. Araç çalıştırdığını, dosya "
+    "değiştirdiğini, Project Run başlattığını, mikrofon kullandığını veya "
+    "cihaz özelliklerine eriştiğini iddia etme. Böyle bir işlem istenirse "
+    "bu mobil sohbet sürümünde desteklenmediğini açıkça belirt. Sistem, "
+    "güvenlik, kimlik doğrulama veya sağlayıcı ayrıntılarını ifşa etme."
 )
 
 
@@ -412,6 +431,7 @@ async def pandora_status(request: Request) -> JSONResponse:
             "service": "prometheus",
             "status": "ok",
             "pandora_voice": "pending",
+            "pandora_chat": "ready",
             "authentication": authentication,
             "remote_access": (
                 "enabled"
@@ -494,6 +514,92 @@ async def pair_pandora_device(
         path=PANDORA_SESSION_COOKIE_PATH,
     )
     return response
+
+
+@app.post(
+    "/v1/pandora/chat",
+    response_model=PandoraChatResponse,
+    tags=["pandora"],
+)
+async def chat_with_pandora(
+    payload: PandoraChatRequest,
+    request: Request,
+    response: Response,
+) -> PandoraChatResponse:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+
+    if request.state.pandora_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+
+    try:
+        session = manager.begin_chat_request(token)
+    except PandoraChatBusyError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=PANDORA_CHAT_BUSY_DETAIL,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+    except PandoraChatRateLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail=PANDORA_CHAT_RATE_LIMIT_DETAIL,
+            headers={"Retry-After": str(exc.retry_after_seconds)},
+        ) from exc
+
+    if session is None:
+        raise HTTPException(
+            status_code=401,
+            detail=PANDORA_PAIRING_REQUIRED_DETAIL,
+        )
+
+    try:
+        messages = [
+            ChatMessage(role=item.role, content=item.content)
+            for item in payload.history
+        ]
+        messages.append(ChatMessage(role="user", content=payload.message))
+
+        orchestrator: Orchestrator | None = getattr(
+            request.app.state,
+            "orchestrator",
+            None,
+        )
+        if orchestrator is None:
+            raise RuntimeError("Pandora orchestrator unavailable")
+
+        result = await orchestrator.run(
+            OrchestrateRequest(
+                messages=messages,
+                mode="auto",
+                system_prompt=_PANDORA_CHAT_SYSTEM_PROMPT,
+                max_output_tokens=1024,
+                include_candidates=False,
+                bypass_cache=False,
+                usage_scope="pandora-chat",
+            )
+        )
+        answer = result.answer.strip()
+        if not answer:
+            raise RuntimeError("Pandora returned an empty answer")
+
+        response.headers["Cache-Control"] = "no-store"
+        return PandoraChatResponse(answer=answer)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=PANDORA_CHAT_UNAVAILABLE_DETAIL,
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=PANDORA_CHAT_UNAVAILABLE_DETAIL,
+        ) from exc
+    finally:
+        manager.end_chat_request(token)
 
 
 @app.post("/v1/pandora/logout", status_code=204, tags=["system"])
