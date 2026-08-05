@@ -27,6 +27,12 @@ class SupervisorCommandStore:
         self._lock = asyncio.Lock()
         self._initialized = False
 
+    @property
+    def state_root(self) -> Path | None:
+        if self.database_path is None:
+            return None
+        return self.database_path.parent
+
     def _initialize_sync(self) -> None:
         if self.database_path is None:
             return

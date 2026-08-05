@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from app.agent.engine import AgentEngine
@@ -82,7 +82,13 @@ from app.planning.integrity import validate_planning_document
 from app.planning.parser import PlanningParseError, parse_planning_document
 from app.storage.operations import OperationsStore
 from app.supervisor.diagnostics import build_command_diagnostics
-from app.supervisor.models import SupervisorCommand, SupervisorCommandSummary
+from app.supervisor.event_journal import MissionEventIntegrityError
+from app.supervisor.models import (
+    MissionEventPage,
+    MissionStateProjection,
+    SupervisorCommand,
+    SupervisorCommandSummary,
+)
 from app.security.auth import (
     HTTP_AUTH_CHALLENGE,
     HTTP_AUTH_REQUIRED_DETAIL,
@@ -1712,6 +1718,50 @@ async def read_supervisor_command(
         return await app.state.supervisor.get(command_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/mission-events",
+    response_model=MissionEventPage,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_events(
+    command_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> MissionEventPage:
+    try:
+        return await app.state.supervisor.list_mission_events(
+            command_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MissionEventIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission event journal bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/mission-state",
+    response_model=MissionStateProjection,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_state(
+    command_id: str,
+) -> MissionStateProjection:
+    try:
+        return await app.state.supervisor.get_mission_state_projection(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MissionEventIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission event journal bütünlüğü doğrulanamadı.",
+        ) from exc
 
 
 @app.post(

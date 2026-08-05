@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.schemas import AgentResponse
 
@@ -245,3 +245,93 @@ class SupervisorCommandSummary(BaseModel):
     pending_decisions: int
     created_at: str
     updated_at: str
+
+
+class MissionEventRecord(BaseModel):
+    schema_version: int = 1
+    event_id: str
+    mission_id: str
+    sequence: int
+    event_type: str
+    canonical_kind: Literal[
+        "mission",
+        "plan",
+        "step",
+        "tool",
+        "approval",
+        "checkpoint",
+        "recovery",
+        "system",
+    ]
+    occurred_at: datetime
+    task_id: str | None = None
+    approval_id: str | None = None
+    actor: str = "supervisor"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    previous_hash: str | None = None
+    event_hash: str
+
+    @model_validator(mode="after")
+    def validate_mission_event(self) -> "MissionEventRecord":
+        if self.schema_version != 1:
+            raise ValueError("schema_version must be 1")
+        if not self.event_id or len(self.event_id.strip()) == 0 or len(self.event_id) > 128:
+            raise ValueError("event_id must be non-empty and <= 128 chars")
+        if not self.mission_id or len(self.mission_id.strip()) == 0 or len(self.mission_id) > 200:
+            raise ValueError("mission_id must be non-empty and <= 200 chars")
+        if self.sequence < 1:
+            raise ValueError("sequence must be >= 1")
+        if not self.event_type or len(self.event_type.strip()) == 0 or len(self.event_type) > 160:
+            raise ValueError("event_type must be non-empty and <= 160 chars")
+        if not self.actor or len(self.actor.strip()) == 0 or len(self.actor) > 80:
+            raise ValueError("actor must be non-empty and <= 80 chars")
+
+        if not self.event_hash.startswith("sha256:") or len(self.event_hash) != 71:
+            raise ValueError("event_hash must be exact sha256:<64 hex>")
+
+        if self.previous_hash is not None:
+            if not self.previous_hash.startswith("sha256:") or len(self.previous_hash) != 71:
+                raise ValueError("previous_hash must be sha256:<64 hex>")
+
+        if self.sequence == 1 and self.previous_hash is not None:
+            raise ValueError("sequence 1 must have previous_hash=None")
+
+        if self.sequence > 1 and self.previous_hash is None:
+            raise ValueError("sequence > 1 must have previous_hash")
+
+        return self
+
+
+class MissionEventPage(BaseModel):
+    mission_id: str
+    events: list[MissionEventRecord]
+    count: int
+    after_sequence: int
+    next_after_sequence: int | None = None
+    has_more: bool = False
+    source: Literal["journal", "legacy_command_events", "empty"]
+    integrity_verified: bool
+    last_sequence: int
+    last_event_hash: str | None = None
+
+
+class MissionEventIntegrity(BaseModel):
+    mission_id: str
+    valid: bool
+    event_count: int
+    last_sequence: int
+    last_event_hash: str | None = None
+    error_code: str | None = None
+    error_sequence: int | None = None
+
+
+class MissionStateProjection(BaseModel):
+    mission_id: str
+    event_count: int
+    last_sequence: int
+    last_event_type: str | None = None
+    command_status: str | None = None
+    task_statuses: dict[str, str] = Field(default_factory=dict)
+    pending_approval_ids: list[str] = Field(default_factory=list)
+    terminal: bool = False
+

@@ -57,7 +57,18 @@ from app.supervisor.tdd_self_fix import (
     TDDSelfFixLoop,
     TDDSelfFixMaxRetriesExceeded,
 )
+from app.supervisor.event_journal import (
+    MissionEventJournal,
+    MissionEventIntegrityError,
+    canonical_event_kind,
+    compute_canonical_event_hash,
+    sanitize_payload,
+)
 from app.supervisor.models import (
+    MissionEventIntegrity,
+    MissionEventPage,
+    MissionEventRecord,
+    MissionStateProjection,
     SupervisorApprovalRecord,
     SupervisorCommand,
     SupervisorDecision,
@@ -94,6 +105,7 @@ class SupervisorService:
         agent: AgentEngine,
         agents: AgentRegistry,
         tools: ToolRegistry,
+        event_journal: MissionEventJournal | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = WorkspacePolicy(
@@ -104,6 +116,7 @@ class SupervisorService:
         self.agent = agent
         self.agents = agents
         self.tools = tools
+        self._event_journal = event_journal
         database_path = None
         if settings.supervisor_persistence_enabled:
             database_path = settings.supervisor_database_path
@@ -139,23 +152,97 @@ class SupervisorService:
             improvement=self.improvement,
         )
 
-    @staticmethod
+    def _get_event_journal(self) -> MissionEventJournal:
+        if getattr(self, "_event_journal", None) is not None:
+            return self._event_journal
+        store = getattr(self, "store", None)
+        state_root = store.state_root if store and hasattr(store, "state_root") else None
+        persistence_enabled = (
+            getattr(self.settings, "supervisor_persistence_enabled", False)
+            if hasattr(self, "settings")
+            else False
+        )
+        journal = MissionEventJournal(
+            root=state_root,
+            persistence_enabled=persistence_enabled,
+        )
+        self._event_journal = journal
+        return journal
+
+    @classmethod
     def _event(
+        cls_or_self: Any,
         command: SupervisorCommand,
         *,
         type: str,
         message: str,
         task_id: str | None = None,
+        approval_id: str | None = None,
+        actor: str = "supervisor",
         data: dict[str, Any] | None = None,
+        payload: Mapping[str, Any] | None = None,
     ) -> None:
-        command.events.append(
+        if isinstance(cls_or_self, SupervisorCommand):
+            cmd = cls_or_self
+            service_inst = None
+        else:
+            cmd = command
+            service_inst = cls_or_self if isinstance(cls_or_self, SupervisorService) else None
+
+        cmd.events.append(
             SupervisorEvent(
-                sequence=len(command.events) + 1,
+                sequence=len(cmd.events) + 1,
                 type=type,
                 message=message,
                 task_id=task_id,
                 data=data or {},
             )
+        )
+
+        # Journal payload snapshot
+        caller_data = dict(data or {})
+        if payload:
+            caller_data.update(dict(payload))
+        caller_data["message"] = message
+
+        task_stat: str | None = None
+        app_state: str | None = None
+        if task_id:
+            for t in cmd.tasks:
+                if t.id == task_id:
+                    task_stat = t.status
+                    app_state = t.approval_state
+                    break
+
+        pending_app_ids: list[str] = []
+        for t in cmd.tasks:
+            if t.approval_id and t.approval_state == "pending":
+                if t.approval_id not in pending_app_ids:
+                    pending_app_ids.append(t.approval_id)
+
+        proj_run = bool(
+            cmd.project_run_preview_digest and cmd.project_run_workspace_path
+        )
+
+        caller_data["command_status"] = cmd.status
+        caller_data["task_status"] = task_stat
+        caller_data["approval_state"] = app_state
+        caller_data["pending_approval_ids"] = pending_app_ids
+        caller_data["project_run"] = proj_run
+
+        if service_inst is not None:
+            journal = service_inst._get_event_journal()
+        else:
+            journal = MissionEventJournal(root=None, persistence_enabled=False)
+
+        journal.append(
+            mission_id=cmd.id,
+            event_type=type,
+            occurred_at=datetime.now(timezone.utc),
+            task_id=task_id,
+            approval_id=approval_id,
+            actor=actor or "supervisor",
+            payload=caller_data,
         )
 
     def _command_lock(self, command_id: str) -> asyncio.Lock:
@@ -7490,6 +7577,195 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             model_calls=0,
             total_tokens=0,
         )
+
+    async def list_mission_events(
+        self,
+        command_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> MissionEventPage:
+        command = await self.get(command_id)
+        journal = self._get_event_journal()
+
+        if journal.has_journal(mission_id=command_id):
+            raw_events = journal.list_events(
+                mission_id=command_id,
+                after_sequence=after_sequence,
+                limit=limit + 1,
+            )
+            has_more = len(raw_events) > limit
+            events = raw_events[:limit]
+            next_after = events[-1].sequence if (has_more and events) else None
+            last_seq = events[-1].sequence if events else 0
+            last_hash = events[-1].event_hash if events else None
+
+            return MissionEventPage(
+                mission_id=command_id,
+                events=events,
+                count=len(events),
+                after_sequence=after_sequence,
+                next_after_sequence=next_after,
+                has_more=has_more,
+                source="journal",
+                integrity_verified=True,
+                last_sequence=last_seq,
+                last_event_hash=last_hash,
+            )
+
+        if not command.events:
+            return MissionEventPage(
+                mission_id=command_id,
+                events=[],
+                count=0,
+                after_sequence=after_sequence,
+                next_after_sequence=None,
+                has_more=False,
+                source="empty",
+                integrity_verified=True,
+                last_sequence=0,
+                last_event_hash=None,
+            )
+
+        mapped_records: list[MissionEventRecord] = []
+        prev_hash: str | None = None
+
+        for idx, ev in enumerate(command.events, start=1):
+            dt = datetime.now(timezone.utc)
+            if isinstance(ev.created_at, str):
+                try:
+                    dt = datetime.fromisoformat(ev.created_at)
+                except Exception:
+                    pass
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+
+            ev_id = f"legacy-{idx}-{hashlib.sha256((ev.type + str(ev.created_at)).encode('utf-8')).hexdigest()[:12]}"
+            kind = canonical_event_kind(ev.type)
+            payload = {"message": ev.message, **(ev.data or {})}
+            san_payload = sanitize_payload(payload)
+
+            dt_iso = dt.astimezone(timezone.utc).isoformat()
+            ev_hash = compute_canonical_event_hash(
+                schema_version=1,
+                event_id=ev_id,
+                mission_id=command_id,
+                sequence=idx,
+                event_type=ev.type,
+                canonical_kind=kind,
+                occurred_at_iso=dt_iso,
+                task_id=ev.task_id,
+                approval_id=ev.data.get("approval_id") if isinstance(ev.data, dict) else None,
+                actor="supervisor",
+                payload=san_payload,
+                previous_hash=prev_hash,
+            )
+
+            record = MissionEventRecord(
+                schema_version=1,
+                event_id=ev_id,
+                mission_id=command_id,
+                sequence=idx,
+                event_type=ev.type,
+                canonical_kind=kind,
+                occurred_at=dt,
+                task_id=ev.task_id,
+                approval_id=ev.data.get("approval_id") if isinstance(ev.data, dict) else None,
+                actor="supervisor",
+                payload=san_payload,
+                previous_hash=prev_hash,
+                event_hash=ev_hash,
+            )
+            mapped_records.append(record)
+            prev_hash = ev_hash
+
+        filtered = [rec for rec in mapped_records if rec.sequence > after_sequence]
+        has_more = len(filtered) > limit
+        events = filtered[:limit]
+        next_after = events[-1].sequence if (has_more and events) else None
+        last_seq = mapped_records[-1].sequence if mapped_records else 0
+        last_hash = mapped_records[-1].event_hash if mapped_records else None
+
+        return MissionEventPage(
+            mission_id=command_id,
+            events=events,
+            count=len(events),
+            after_sequence=after_sequence,
+            next_after_sequence=next_after,
+            has_more=has_more,
+            source="legacy_command_events",
+            integrity_verified=False,
+            last_sequence=last_seq,
+            last_event_hash=last_hash,
+        )
+
+    async def get_mission_state_projection(
+        self,
+        command_id: str,
+    ) -> MissionStateProjection:
+        command = await self.get(command_id)
+        journal = self._get_event_journal()
+
+        if journal.has_journal(mission_id=command_id):
+            return journal.project_state(mission_id=command_id)
+
+        page = await self.list_mission_events(command_id=command_id, after_sequence=0, limit=100000)
+        events = page.events
+
+        if not events:
+            return MissionStateProjection(
+                mission_id=command_id,
+                event_count=0,
+                last_sequence=0,
+                last_event_type=None,
+                command_status=command.status,
+                task_statuses={},
+                pending_approval_ids=[],
+                terminal=(command.status in {"completed", "failed", "cancelled", "reverted"}),
+            )
+
+        cmd_status: str | None = None
+        task_stats: dict[str, str] = {}
+        pending_apps: list[str] = []
+
+        for ev in events:
+            p = ev.payload or {}
+            c_stat = p.get("command_status")
+            if isinstance(c_stat, str) and c_stat:
+                cmd_status = c_stat
+
+            t_id = ev.task_id
+            t_stat = p.get("task_status")
+            if t_id and isinstance(t_stat, str) and t_stat:
+                task_stats[t_id] = t_stat
+
+            p_apps = p.get("pending_approval_ids")
+            if isinstance(p_apps, list):
+                clean_p_apps = [str(x) for x in p_apps if isinstance(x, str) and x]
+                seen = set()
+                uniq_p_apps = []
+                for item in clean_p_apps:
+                    if item not in seen:
+                        seen.add(item)
+                        uniq_p_apps.append(item)
+                pending_apps = uniq_p_apps
+
+        if cmd_status is None:
+            cmd_status = command.status
+
+        terminal = cmd_status in {"completed", "failed", "cancelled", "reverted"}
+
+        return MissionStateProjection(
+            mission_id=command_id,
+            event_count=len(events),
+            last_sequence=events[-1].sequence,
+            last_event_type=events[-1].event_type,
+            command_status=cmd_status,
+            task_statuses=task_stats,
+            pending_approval_ids=pending_apps,
+            terminal=terminal,
+        )
+
 
 
 
