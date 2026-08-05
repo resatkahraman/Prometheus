@@ -80,6 +80,8 @@ def canonical_event_kind(event_type: str) -> str:
         or et.startswith("run_snapshot_")
         or et.startswith("run_changes_")
         or et.startswith("git_run_")
+        or et.startswith("execution_receipt_")
+        or et.startswith("receipt_")
     ):
         return "tool"
 

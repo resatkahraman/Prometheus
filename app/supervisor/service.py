@@ -57,6 +57,12 @@ from app.supervisor.tdd_self_fix import (
     TDDSelfFixLoop,
     TDDSelfFixMaxRetriesExceeded,
 )
+from app.supervisor.execution_receipts import (
+    ExecutionReceiptStore,
+    ExecutionReceiptError,
+    ExecutionReceiptIntegrityError,
+    DuplicateExecutionReceiptError,
+)
 from app.supervisor.event_journal import (
     MissionEventJournal,
     MissionEventIntegrityError,
@@ -65,6 +71,10 @@ from app.supervisor.event_journal import (
     sanitize_payload,
 )
 from app.supervisor.models import (
+    ExecutionReceipt,
+    ExecutionReceiptIntegrity,
+    ExecutionReceiptPage,
+    ExecutionReceiptSummary,
     MissionEventIntegrity,
     MissionEventPage,
     MissionEventRecord,
@@ -106,6 +116,7 @@ class SupervisorService:
         agents: AgentRegistry,
         tools: ToolRegistry,
         event_journal: MissionEventJournal | None = None,
+        execution_receipt_store: ExecutionReceiptStore | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = WorkspacePolicy(
@@ -117,6 +128,7 @@ class SupervisorService:
         self.agents = agents
         self.tools = tools
         self._event_journal = event_journal
+        self._execution_receipt_store = execution_receipt_store
         database_path = None
         if settings.supervisor_persistence_enabled:
             database_path = settings.supervisor_database_path
@@ -168,6 +180,114 @@ class SupervisorService:
         )
         self._event_journal = journal
         return journal
+
+    def _get_execution_receipt_store(self) -> ExecutionReceiptStore:
+        if getattr(self, "_execution_receipt_store", None) is not None:
+            return self._execution_receipt_store
+        store = getattr(self, "store", None)
+        state_root = store.state_root if store and hasattr(store, "state_root") else None
+        persistence_enabled = (
+            getattr(self.settings, "supervisor_persistence_enabled", False)
+            if hasattr(self, "settings")
+            else False
+        )
+        receipt_store = ExecutionReceiptStore(
+            root=state_root,
+            persistence_enabled=persistence_enabled,
+        )
+        self._execution_receipt_store = receipt_store
+        return receipt_store
+
+    async def _record_execution_receipt(
+        self,
+        *,
+        mission_id: str,
+        execution_kind: str,
+        actor_kind: str,
+        actor_id: str,
+        started_at: datetime,
+        completed_at: datetime,
+        outcome: str,
+        request_summary: str,
+        input_value: Any = None,
+        result_value: Any = None,
+        receipt_id: str | None = None,
+        tool_name: str | None = None,
+        worker_role: str | None = None,
+        task_id: str | None = None,
+        step_id: str | None = None,
+        approval_id: str | None = None,
+        sandbox_id: str | None = None,
+        capabilities: list[str] | None = None,
+        filesystem_scope: list[str] | None = None,
+        network_access: list[str] | None = None,
+        exit_code: int | None = None,
+        affected_files: list[str] | None = None,
+        stdout_preview: str | None = None,
+        stderr_preview: str | None = None,
+        artifact_ids: list[str] | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ExecutionReceipt:
+        receipt_store = self._get_execution_receipt_store()
+
+        receipt = receipt_store.append(
+            mission_id=mission_id,
+            execution_kind=execution_kind,
+            actor_kind=actor_kind,
+            actor_id=actor_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            outcome=outcome,
+            request_summary=request_summary,
+            input_value=input_value,
+            result_value=result_value,
+            receipt_id=receipt_id,
+            tool_name=tool_name,
+            worker_role=worker_role,
+            task_id=task_id,
+            step_id=step_id,
+            approval_id=approval_id,
+            sandbox_id=sandbox_id,
+            capabilities=capabilities,
+            filesystem_scope=filesystem_scope,
+            network_access=network_access,
+            exit_code=exit_code,
+            affected_files=affected_files,
+            stdout_preview=stdout_preview,
+            stderr_preview=stderr_preview,
+            artifact_ids=artifact_ids,
+            error_code=error_code,
+            error_message=error_message,
+            metadata=metadata,
+        )
+
+        store = getattr(self, "store", None)
+        command = await store.get(mission_id) if store else None
+        if command:
+            summary_payload = {
+                "receipt_id": receipt.receipt_id,
+                "receipt_sequence": receipt.sequence,
+                "receipt_hash": receipt.receipt_hash,
+                "execution_kind": receipt.execution_kind,
+                "actor_id": receipt.actor_id,
+                "outcome": receipt.outcome,
+                "task_id": receipt.task_id,
+                "duration_ms": receipt.duration_ms,
+                "affected_file_count": len(receipt.affected_files),
+                "artifact_count": len(receipt.artifact_ids),
+            }
+            self._event(
+                command,
+                type="execution_receipt_recorded",
+                message=f"Recorded execution receipt {receipt.receipt_id} (seq {receipt.sequence})",
+                task_id=task_id,
+                data=summary_payload,
+            )
+            await store.put(command)
+
+        return receipt
 
     @classmethod
     def _event(
@@ -5671,6 +5791,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         command_id: str,
         task_id: str,
     ) -> SupervisorCommand:
+        started_at = datetime.now(timezone.utc)
         operation = f"task:{task_id}"
         command = await self.store.get(command_id)
         task = next(
@@ -5681,11 +5802,28 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             raise KeyError("Görev bulunamadı.")
 
         if task.exact_files:
-            return await self._advance_structured_task(
+            res_cmd = await self._advance_structured_task(
                 command_id=command_id,
                 task_id=task_id,
                 reason="task_start",
             )
+            completed_at = datetime.now(timezone.utc)
+            task_ref = next((t for t in res_cmd.tasks if t.id == task_id), task)
+            outcome = "succeeded" if task_ref.status in {"completed", "reviewing", "awaiting_approval"} else ("cancelled" if task_ref.status == "cancelled" else "failed")
+            await self._record_execution_receipt(
+                mission_id=command_id,
+                execution_kind="worker" if task_ref.assigned_agent else "task",
+                actor_kind="worker",
+                actor_id=task_ref.assigned_agent or "supervisor",
+                worker_role=task_ref.assigned_agent or "supervisor",
+                task_id=task_ref.id,
+                started_at=started_at,
+                completed_at=completed_at,
+                outcome=outcome,
+                request_summary=f"Execution of task '{task_ref.title}'",
+                affected_files=task_ref.exact_files or [],
+            )
+            return res_cmd
 
         request = AgentRequest(
             message=self._assignment_prompt(command, task),
@@ -5721,6 +5859,21 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                 heartbeat_phase="agent_work",
             )
         except asyncio.CancelledError:
+            completed_at = datetime.now(timezone.utc)
+            await self._record_execution_receipt(
+                mission_id=command_id,
+                execution_kind="worker" if task.assigned_agent else "task",
+                actor_kind="worker",
+                actor_id=task.assigned_agent or "supervisor",
+                worker_role=task.assigned_agent or "supervisor",
+                task_id=task.id,
+                started_at=started_at,
+                completed_at=completed_at,
+                outcome="cancelled",
+                request_summary=f"Execution of task '{task.title}'",
+                affected_files=task.exact_files or [],
+                error_code="task_cancelled",
+            )
             raise
         except TimeoutError as exc:
             command = await self.store.get(command_id)
@@ -5738,10 +5891,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                 task.status = "rework_required"
                 task.recovery_reason = "task_agent_timeout"
                 task.last_approval_message = (
-                    "Agent toplam çalışma süresini aştı. Komut ve diğer "
-                    "görevler başarısız sayılmadı; mevcut kanıtlar "
-                    "korunarak görev yeniden başlatılabilir. "
-                    f"Neden: {exc}"
+                    "Agent yanıt süresi doldu. Değişiklikler revert edildi."
                 )
                 self._event(
                     command,
@@ -5800,6 +5950,23 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         self._clear_operation_if(command, operation)
         self._refresh_task_states(command)
         await self.store.put(command)
+
+        completed_at = datetime.now(timezone.utc)
+        outcome = "succeeded" if task.status in {"completed", "reviewing", "awaiting_approval"} else ("cancelled" if task.status == "cancelled" else "failed")
+        await self._record_execution_receipt(
+            mission_id=command_id,
+            execution_kind="worker" if task.assigned_agent else "task",
+            actor_kind="worker",
+            actor_id=task.assigned_agent or "supervisor",
+            worker_role=task.assigned_agent or "supervisor",
+            task_id=task.id,
+            started_at=started_at,
+            completed_at=completed_at,
+            outcome=outcome,
+            request_summary=f"Execution of task '{task.title}'",
+            affected_files=task.exact_files or [],
+        )
+
         return command
 
     async def run_task(
@@ -7765,6 +7932,66 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             pending_approval_ids=pending_apps,
             terminal=terminal,
         )
+
+    async def list_execution_receipts(
+        self,
+        command_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> ExecutionReceiptPage:
+        command = await self.get(command_id)
+        receipt_store = self._get_execution_receipt_store()
+
+        if receipt_store.has_receipts(mission_id=command_id):
+            raw_receipts = receipt_store.list_receipts(
+                mission_id=command_id,
+                after_sequence=after_sequence,
+                limit=limit + 1,
+            )
+            has_more = len(raw_receipts) > limit
+            receipts = raw_receipts[:limit]
+            next_after = receipts[-1].sequence if (has_more and receipts) else None
+            last_seq = receipts[-1].sequence if receipts else 0
+            last_hash = receipts[-1].receipt_hash if receipts else None
+
+            return ExecutionReceiptPage(
+                mission_id=command_id,
+                receipts=receipts,
+                count=len(receipts),
+                after_sequence=after_sequence,
+                next_after_sequence=next_after,
+                has_more=has_more,
+                source="receipt_store",
+                integrity_verified=True,
+                last_sequence=last_seq,
+                last_receipt_hash=last_hash,
+            )
+
+        return ExecutionReceiptPage(
+            mission_id=command_id,
+            receipts=[],
+            count=0,
+            after_sequence=after_sequence,
+            next_after_sequence=None,
+            has_more=False,
+            source="empty",
+            integrity_verified=True,
+            last_sequence=0,
+            last_receipt_hash=None,
+        )
+
+    async def get_execution_receipt(
+        self,
+        command_id: str,
+        receipt_id: str,
+    ) -> ExecutionReceipt:
+        command = await self.get(command_id)
+        receipt_store = self._get_execution_receipt_store()
+        receipt = receipt_store.get_receipt(mission_id=command_id, receipt_id=receipt_id)
+        if receipt is None:
+            raise KeyError(f"Execution receipt '{receipt_id}' command '{command_id}' için bulunamadı.")
+        return receipt
 
 
 

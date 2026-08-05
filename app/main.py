@@ -82,8 +82,11 @@ from app.planning.integrity import validate_planning_document
 from app.planning.parser import PlanningParseError, parse_planning_document
 from app.storage.operations import OperationsStore
 from app.supervisor.diagnostics import build_command_diagnostics
+from app.supervisor.execution_receipts import ExecutionReceiptIntegrityError
 from app.supervisor.event_journal import MissionEventIntegrityError
 from app.supervisor.models import (
+    ExecutionReceipt,
+    ExecutionReceiptPage,
     MissionEventPage,
     MissionStateProjection,
     SupervisorCommand,
@@ -1761,6 +1764,54 @@ async def read_supervisor_mission_state(
         raise HTTPException(
             status_code=409,
             detail="Mission event journal bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/execution-receipts",
+    response_model=ExecutionReceiptPage,
+    tags=["supervisor"],
+)
+async def read_supervisor_execution_receipts(
+    command_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> ExecutionReceiptPage:
+    try:
+        return await app.state.supervisor.list_execution_receipts(
+            command_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ExecutionReceiptIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Execution receipt bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/execution-receipts/{receipt_id}",
+    response_model=ExecutionReceipt,
+    tags=["supervisor"],
+)
+async def read_supervisor_execution_receipt(
+    command_id: str,
+    receipt_id: str,
+) -> ExecutionReceipt:
+    try:
+        return await app.state.supervisor.get_execution_receipt(
+            command_id=command_id,
+            receipt_id=receipt_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ExecutionReceiptIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Execution receipt bütünlüğü doğrulanamadı.",
         ) from exc
 
 

@@ -335,3 +335,165 @@ class MissionStateProjection(BaseModel):
     pending_approval_ids: list[str] = Field(default_factory=list)
     terminal: bool = False
 
+
+class ExecutionReceipt(BaseModel):
+    schema_version: int = 1
+    receipt_id: str
+    mission_id: str
+    sequence: int
+
+    execution_kind: Literal["tool", "worker", "verification", "command"]
+    actor_kind: Literal["supervisor", "worker", "tool", "system"]
+    actor_id: str
+    tool_name: str | None = None
+    worker_role: str | None = None
+
+    task_id: str | None = None
+    step_id: str | None = None
+    approval_id: str | None = None
+    sandbox_id: str | None = None
+
+    started_at: datetime
+    completed_at: datetime
+    duration_ms: int
+    outcome: Literal["succeeded", "failed", "cancelled", "timed_out"]
+
+    request_summary: str
+    input_hash: str
+    result_hash: str
+
+    capabilities: list[str] = Field(default_factory=list)
+    filesystem_scope: list[str] = Field(default_factory=list)
+    network_access: list[str] = Field(default_factory=list)
+    exit_code: int | None = None
+    affected_files: list[str] = Field(default_factory=list)
+
+    stdout_preview: str | None = None
+    stderr_preview: str | None = None
+    artifact_ids: list[str] = Field(default_factory=list)
+
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    previous_receipt_hash: str | None = None
+    receipt_hash: str
+
+    @model_validator(mode="after")
+    def validate_receipt(self) -> "ExecutionReceipt":
+        if self.schema_version != 1:
+            raise ValueError("schema_version must be 1")
+        if self.sequence < 1:
+            raise ValueError("sequence must be >= 1")
+        if self.completed_at < self.started_at:
+            raise ValueError("completed_at cannot be before started_at")
+        if self.duration_ms < 0:
+            raise ValueError("duration_ms must be >= 0")
+
+        self.receipt_id = self.receipt_id.strip()[:100]
+        self.mission_id = self.mission_id.strip()[:100]
+        self.actor_id = self.actor_id.strip()[:100]
+        if self.tool_name:
+            self.tool_name = self.tool_name.strip()[:100]
+        if self.worker_role:
+            self.worker_role = self.worker_role.strip()[:100]
+        if self.task_id:
+            self.task_id = self.task_id.strip()[:100]
+        if self.step_id:
+            self.step_id = self.step_id.strip()[:100]
+        if self.approval_id:
+            self.approval_id = self.approval_id.strip()[:100]
+        if self.sandbox_id:
+            self.sandbox_id = self.sandbox_id.strip()[:100]
+        if self.error_code:
+            self.error_code = self.error_code.strip()[:100]
+
+        if self.execution_kind == "tool" and not self.tool_name:
+            raise ValueError("tool_name is required for tool execution")
+        if self.execution_kind == "worker" and not self.worker_role:
+            raise ValueError("worker_role is required for worker execution")
+
+        if self.sequence == 1 and self.previous_receipt_hash is not None:
+            raise ValueError("previous_receipt_hash must be None for sequence 1")
+        if self.sequence > 1 and self.previous_receipt_hash is None:
+            raise ValueError("previous_receipt_hash is required for sequence > 1")
+
+        for name, hval in [
+            ("input_hash", self.input_hash),
+            ("result_hash", self.result_hash),
+            ("receipt_hash", self.receipt_hash),
+        ]:
+            if not hval.startswith("sha256:") or len(hval) != 71 or not all(c in "0123456789abcdef" for c in hval[7:]):
+                raise ValueError(f"{name} must be in sha256:<64 hex> format")
+
+        if self.previous_receipt_hash:
+            ph = self.previous_receipt_hash
+            if not ph.startswith("sha256:") or len(ph) != 71 or not all(c in "0123456789abcdef" for c in ph[7:]):
+                raise ValueError("previous_receipt_hash must be in sha256:<64 hex> format")
+
+        if len(self.request_summary) > 4000:
+            self.request_summary = self.request_summary[:3985] + "...[TRUNCATED]"
+        if self.stdout_preview and len(self.stdout_preview) > 20000:
+            self.stdout_preview = self.stdout_preview[:19985] + "...[TRUNCATED]"
+        if self.stderr_preview and len(self.stderr_preview) > 20000:
+            self.stderr_preview = self.stderr_preview[:19985] + "...[TRUNCATED]"
+        if self.error_message and len(self.error_message) > 20000:
+            self.error_message = self.error_message[:19985] + "...[TRUNCATED]"
+
+        def _clean_list(items: list[str], max_len: int = 500) -> list[str]:
+            seen = set()
+            res = []
+            for item in items:
+                cleaned = str(item).strip()[:200]
+                if cleaned and cleaned not in seen:
+                    seen.add(cleaned)
+                    res.append(cleaned)
+                    if len(res) >= max_len:
+                        break
+            return res
+
+        self.capabilities = _clean_list(self.capabilities, 200)
+        self.filesystem_scope = _clean_list(self.filesystem_scope, 500)
+        self.network_access = _clean_list(self.network_access, 200)
+        self.affected_files = _clean_list(self.affected_files, 500)
+        self.artifact_ids = _clean_list(self.artifact_ids, 500)
+
+        return self
+
+
+class ExecutionReceiptPage(BaseModel):
+    mission_id: str
+    receipts: list[ExecutionReceipt]
+    count: int
+    after_sequence: int
+    next_after_sequence: int | None = None
+    has_more: bool = False
+    source: Literal["receipt_store", "empty"]
+    integrity_verified: bool
+    last_sequence: int
+    last_receipt_hash: str | None = None
+
+
+class ExecutionReceiptIntegrity(BaseModel):
+    mission_id: str
+    valid: bool
+    receipt_count: int
+    last_sequence: int
+    last_receipt_hash: str | None = None
+    error_code: str | None = None
+    error_sequence: int | None = None
+
+
+class ExecutionReceiptSummary(BaseModel):
+    receipt_id: str
+    mission_id: str
+    sequence: int
+    execution_kind: str
+    actor_id: str
+    task_id: str | None = None
+    outcome: str
+    duration_ms: int
+    affected_file_count: int
+    artifact_count: int
+    receipt_hash: str
+
