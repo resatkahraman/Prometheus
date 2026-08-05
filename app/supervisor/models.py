@@ -730,3 +730,171 @@ class RecoverMissionResponse(BaseModel):
     control_version: int = Field(ge=0)
     message: str
 
+
+class MissionHistoryCheckpointSummary(BaseModel):
+    checkpoint_id: str = Field(min_length=1, max_length=160)
+    sequence: int = Field(ge=1)
+    created_at: datetime
+    reason: str = Field(min_length=1, max_length=80)
+    status_at_checkpoint: str = Field(min_length=1, max_length=80)
+    resume_target_status: str | None = Field(default=None, max_length=80)
+    current_task_id: str | None = Field(default=None, max_length=160)
+    resumable: bool
+    consumed_by_resume: bool
+    checkpoint_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def normalize_fields(self) -> "MissionHistoryCheckpointSummary":
+        self.checkpoint_id = self.checkpoint_id.strip()
+        self.reason = self.reason.strip()
+        self.status_at_checkpoint = self.status_at_checkpoint.strip()
+        self.resume_target_status = (self.resume_target_status or "").strip() or None
+        self.current_task_id = (self.current_task_id or "").strip() or None
+        if not self.checkpoint_id or not self.reason or not self.status_at_checkpoint:
+            raise ValueError("checkpoint summary fields must not be empty")
+        return self
+
+
+class MissionHistoryFailureSummary(BaseModel):
+    failure_id: str = Field(min_length=1, max_length=160)
+    failure_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    source_receipt_id: str | None = Field(default=None, max_length=160)
+    phase: str = Field(min_length=1, max_length=80)
+    category: str = Field(min_length=1, max_length=80)
+    severity: str = Field(min_length=1, max_length=40)
+    error_code: str = Field(min_length=1, max_length=160)
+    retryable: bool
+    recoverable: bool
+    recommended_action: str = Field(min_length=1, max_length=80)
+    task_attempt: int = Field(ge=0)
+    mission_recovery_count: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def normalize_fields(self) -> "MissionHistoryFailureSummary":
+        for name in ("failure_id", "phase", "category", "severity", "error_code", "recommended_action"):
+            value = getattr(self, name).strip()
+            if not value:
+                raise ValueError(f"{name} must not be empty")
+            setattr(self, name, value)
+        self.source_receipt_id = (self.source_receipt_id or "").strip() or None
+        return self
+
+
+class MissionHistoryRecoverySummary(BaseModel):
+    status: Literal["started", "scheduled", "completed", "blocked", "failed"]
+    failure_id: str | None = Field(default=None, max_length=160)
+    category: str | None = Field(default=None, max_length=80)
+    recovery_attempts_for_failure: int = Field(default=0, ge=0)
+    recovery_count: int = Field(default=0, ge=0)
+    recovery_checkpoint_id: str | None = Field(default=None, max_length=160)
+    control_version: int | None = Field(default=None, ge=0)
+    scheduled: bool | None = None
+
+
+class MissionHistoryEntry(BaseModel):
+    sequence: int = Field(ge=1)
+    event_id: str = Field(min_length=1, max_length=160)
+    occurred_at: datetime
+    event_type: str = Field(min_length=1, max_length=160)
+    canonical_kind: Literal["mission", "plan", "step", "tool", "approval", "checkpoint", "recovery", "system"]
+    actor: str = Field(min_length=1, max_length=160)
+    task_id: str | None = Field(default=None, max_length=160)
+    approval_id: str | None = Field(default=None, max_length=160)
+    label: str = Field(min_length=1, max_length=160)
+    command_status: str | None = Field(default=None, max_length=80)
+    task_status: str | None = Field(default=None, max_length=80)
+    receipt: ExecutionReceiptSummary | None = None
+    checkpoint: MissionHistoryCheckpointSummary | None = None
+    failure: MissionHistoryFailureSummary | None = None
+    recovery: MissionHistoryRecoverySummary | None = None
+    event_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class MissionHistoryPage(BaseModel):
+    mission_id: str
+    command_status: str
+    terminal: bool
+    entries: list[MissionHistoryEntry]
+    count: int = Field(ge=0)
+    after_sequence: int = Field(ge=0)
+    next_after_sequence: int | None = Field(default=None, ge=1)
+    has_more: bool
+    source: Literal["journal", "legacy_command_events", "empty"]
+    integrity_verified: bool
+    last_sequence: int = Field(ge=0)
+    last_event_hash: str | None = None
+
+
+class MissionTaskPostRunSummary(BaseModel):
+    task_id: str = Field(min_length=1, max_length=160)
+    title: str = Field(min_length=1, max_length=500)
+    status: str = Field(min_length=1, max_length=80)
+    attempts: int = Field(ge=0)
+    verification_failures: int = Field(ge=0)
+    continuation_resumes: int = Field(ge=0)
+    recovery_reason: str | None = Field(default=None, max_length=300)
+    materialized_file_count: int = Field(ge=0)
+    approval_count: int = Field(ge=0)
+
+
+class MissionPostRunSummary(BaseModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    mission_id: str
+    command_status: Literal["completed", "failed"]
+    outcome: Literal["succeeded", "failed"]
+    terminal: Literal[True] = True
+    goal: str = Field(max_length=2000)
+    created_at: str
+    updated_at: str
+    duration_ms: int | None = Field(default=None, ge=0)
+    task_count: int = Field(ge=0)
+    completed_task_count: int = Field(ge=0)
+    failed_task_count: int = Field(ge=0)
+    waiting_task_count: int = Field(ge=0)
+    other_task_count: int = Field(ge=0)
+    event_count: int = Field(ge=0)
+    receipt_count: int = Field(ge=0)
+    checkpoint_count: int = Field(ge=0)
+    failure_count: int = Field(ge=0)
+    recovery_count: int = Field(ge=0)
+    resume_count: int = Field(ge=0)
+    approval_count: int = Field(ge=0)
+    execution_succeeded_count: int = Field(ge=0)
+    execution_failed_count: int = Field(ge=0)
+    execution_cancelled_count: int = Field(ge=0)
+    execution_timed_out_count: int = Field(ge=0)
+    total_execution_duration_ms: int = Field(ge=0)
+    affected_file_count: int = Field(ge=0)
+    artifact_count: int = Field(ge=0)
+    unlinked_receipt_count: int = Field(ge=0)
+    unlinked_checkpoint_count: int = Field(ge=0)
+    latest_failure: MissionFailureClassification | None = None
+    tasks: list[MissionTaskPostRunSummary]
+    highlights: list[str] = Field(max_length=12)
+    warnings: list[str] = Field(max_length=12)
+    history_source: Literal["journal", "legacy_command_events", "empty"]
+    integrity_verified: bool
+    last_event_sequence: int = Field(ge=0)
+    last_event_hash: str | None = None
+    last_receipt_sequence: int = Field(ge=0)
+    last_receipt_hash: str | None = None
+    last_checkpoint_sequence: int = Field(ge=0)
+    last_checkpoint_hash: str | None = None
+    summary_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_summary_counts(self) -> "MissionPostRunSummary":
+        if len({task.task_id for task in self.tasks}) != len(self.tasks):
+            raise ValueError("task IDs must be unique")
+        if self.task_count != len(self.tasks):
+            raise ValueError("task_count must equal tasks length")
+        if self.completed_task_count + self.failed_task_count + self.waiting_task_count + self.other_task_count != self.task_count:
+            raise ValueError("task status counts must equal task_count")
+        if self.execution_succeeded_count + self.execution_failed_count + self.execution_cancelled_count + self.execution_timed_out_count != self.receipt_count:
+            raise ValueError("execution outcome counts must equal receipt_count")
+        if any(len(item) > 300 for item in self.highlights):
+            raise ValueError("highlight exceeds 300 characters")
+        if any(len(item) > 500 for item in self.warnings):
+            raise ValueError("warning exceeds 500 characters")
+        return self
+

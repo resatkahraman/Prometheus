@@ -91,6 +91,10 @@ from app.supervisor.checkpoints import (
 )
 from app.supervisor.execution_receipts import ExecutionReceiptIntegrityError
 from app.supervisor.event_journal import MissionEventIntegrityError
+from app.supervisor.history import (
+    MissionHistoryIntegrityError,
+    MissionHistoryLimitError,
+)
 from app.supervisor.models import (
     ExecutionReceipt,
     ExecutionReceiptPage,
@@ -102,6 +106,8 @@ from app.supervisor.models import (
     RecoverMissionRequest,
     RecoverMissionResponse,
     MissionEventPage,
+    MissionHistoryPage,
+    MissionPostRunSummary,
     MissionStateProjection,
     SupervisorCommand,
     SupervisorCommandSummary,
@@ -1773,6 +1779,74 @@ async def read_supervisor_mission_events(
         raise HTTPException(
             status_code=409,
             detail="Mission event journal bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/history",
+    response_model=MissionHistoryPage,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_history(
+    command_id: str,
+    response: Response,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> MissionHistoryPage:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await app.state.supervisor.get_mission_history(
+            command_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (
+        MissionHistoryIntegrityError,
+        MissionEventIntegrityError,
+        ExecutionReceiptIntegrityError,
+        MissionCheckpointIntegrityError,
+    ) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission geçmişi bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/post-run-summary",
+    response_model=MissionPostRunSummary,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_post_run_summary(
+    command_id: str,
+    response: Response,
+) -> MissionPostRunSummary:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await app.state.supervisor.get_mission_post_run_summary(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MissionHistoryLimitError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission geçmişi desteklenen kayıt sınırını aşıyor.",
+        ) from exc
+    except (
+        MissionHistoryIntegrityError,
+        MissionEventIntegrityError,
+        ExecutionReceiptIntegrityError,
+        MissionCheckpointIntegrityError,
+    ) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission geçmişi bütünlüğü doğrulanamadı.",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Post-run özeti yalnız tamamlanmış veya başarısız Mission'lar için kullanılabilir.",
         ) from exc
 
 

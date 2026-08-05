@@ -84,6 +84,13 @@ from app.supervisor.recovery import (
     MAX_RECOVERY_ATTEMPTS_PER_FAILURE,
     classify_mission_failure,
 )
+from app.supervisor.history import (
+    MAX_MISSION_HISTORY_RECORDS,
+    MissionHistoryIntegrityError,
+    MissionHistoryLimitError,
+    build_mission_history_page,
+    build_mission_post_run_summary,
+)
 from app.supervisor.models import (
     ExecutionReceipt,
     ExecutionReceiptIntegrity,
@@ -98,6 +105,8 @@ from app.supervisor.models import (
     MissionEventRecord,
     MissionStateProjection,
     MissionFailureClassification,
+    MissionHistoryPage,
+    MissionPostRunSummary,
     MissionRecoveryStatusResponse,
     RecoverMissionResponse,
     SupervisorApprovalRecord,
@@ -8827,3 +8836,92 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         if rec is None:
             raise KeyError(f"Mission checkpoint '{checkpoint_id}' command '{command_id}' için bulunamadı.")
         return rec
+
+    async def get_mission_history(
+        self,
+        command_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> MissionHistoryPage:
+        command = await self.get(command_id)
+        event_page = await self.list_mission_events(
+            command_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+        receipt_ids: set[str] = set()
+        checkpoint_ids: set[str] = set()
+        for event in event_page.events:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            for key in ("receipt_id", "source_receipt_id"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    receipt_ids.add(value.strip())
+            for key in ("checkpoint_id", "recovery_checkpoint_id"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    checkpoint_ids.add(value.strip())
+        try:
+            receipts = {
+                receipt_id: await self.get_execution_receipt(command_id, receipt_id)
+                for receipt_id in sorted(receipt_ids)
+            }
+            checkpoints = {
+                checkpoint_id: await self.get_mission_checkpoint(command_id, checkpoint_id)
+                for checkpoint_id in sorted(checkpoint_ids)
+            }
+        except KeyError as exc:
+            raise MissionHistoryIntegrityError(
+                "Referenced immutable Mission evidence is missing."
+            ) from exc
+        return build_mission_history_page(
+            command=command,
+            event_page=event_page,
+            receipts_by_id=receipts,
+            checkpoints_by_id=checkpoints,
+        )
+
+    async def _load_complete_mission_evidence(
+        self,
+        command_id: str,
+    ) -> tuple[MissionEventPage, list[ExecutionReceipt], list[MissionCheckpointRecord]]:
+        event_page = await self.list_mission_events(
+            command_id,
+            after_sequence=0,
+            limit=MAX_MISSION_HISTORY_RECORDS + 1,
+        )
+        if event_page.has_more or len(event_page.events) > MAX_MISSION_HISTORY_RECORDS:
+            raise MissionHistoryLimitError("Mission event limit exceeded.")
+        receipt_page = await self.list_execution_receipts(
+            command_id,
+            after_sequence=0,
+            limit=MAX_MISSION_HISTORY_RECORDS + 1,
+        )
+        if receipt_page.has_more or len(receipt_page.receipts) > MAX_MISSION_HISTORY_RECORDS:
+            raise MissionHistoryLimitError("Mission receipt limit exceeded.")
+        checkpoint_page = await self.list_mission_checkpoints(
+            command_id,
+            after_sequence=0,
+            limit=MAX_MISSION_HISTORY_RECORDS + 1,
+        )
+        if checkpoint_page.has_more or len(checkpoint_page.checkpoints) > MAX_MISSION_HISTORY_RECORDS:
+            raise MissionHistoryLimitError("Mission checkpoint limit exceeded.")
+        return event_page, receipt_page.receipts, checkpoint_page.checkpoints
+
+    async def get_mission_post_run_summary(
+        self,
+        command_id: str,
+    ) -> MissionPostRunSummary:
+        command = await self.get(command_id)
+        if command.status not in {"completed", "failed"}:
+            raise ValueError(
+                "Post-run summary is available only for completed or failed Missions."
+            )
+        event_page, receipts, checkpoints = await self._load_complete_mission_evidence(command_id)
+        return build_mission_post_run_summary(
+            command=command,
+            event_page=event_page,
+            receipts=receipts,
+            checkpoints=checkpoints,
+        )
