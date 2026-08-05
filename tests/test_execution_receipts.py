@@ -114,7 +114,7 @@ def test_execution_receipt_store_corruption_detection(temp_store_root: Path):
     file_path = store._receipt_file_path(mission_id)
     with open(file_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
-    
+
     data = json.loads(lines[0])
     data["outcome"] = "tampered"
     with open(file_path, "w", encoding="utf-8") as f:
