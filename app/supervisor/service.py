@@ -57,6 +57,14 @@ from app.supervisor.tdd_self_fix import (
     TDDSelfFixLoop,
     TDDSelfFixMaxRetriesExceeded,
 )
+from app.supervisor.checkpoints import (
+    MissionCheckpointStore,
+    MissionCheckpointError,
+    MissionCheckpointIntegrityError,
+    DuplicateMissionCheckpointError,
+    compute_state_hash,
+    compute_canonical_checkpoint_hash,
+)
 from app.supervisor.execution_receipts import (
     ExecutionReceiptStore,
     ExecutionReceiptError,
@@ -75,6 +83,10 @@ from app.supervisor.models import (
     ExecutionReceiptIntegrity,
     ExecutionReceiptPage,
     ExecutionReceiptSummary,
+    MissionCheckpointIntegrity,
+    MissionCheckpointPage,
+    MissionCheckpointRecord,
+    MissionControlResponse,
     MissionEventIntegrity,
     MissionEventPage,
     MissionEventRecord,
@@ -117,6 +129,7 @@ class SupervisorService:
         tools: ToolRegistry,
         event_journal: MissionEventJournal | None = None,
         execution_receipt_store: ExecutionReceiptStore | None = None,
+        mission_checkpoint_store: MissionCheckpointStore | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = WorkspacePolicy(
@@ -129,6 +142,7 @@ class SupervisorService:
         self.tools = tools
         self._event_journal = event_journal
         self._execution_receipt_store = execution_receipt_store
+        self._mission_checkpoint_store = mission_checkpoint_store
         database_path = None
         if settings.supervisor_persistence_enabled:
             database_path = settings.supervisor_database_path
@@ -197,6 +211,374 @@ class SupervisorService:
         )
         self._execution_receipt_store = receipt_store
         return receipt_store
+
+    def _get_mission_checkpoint_store(self) -> MissionCheckpointStore:
+        if getattr(self, "_mission_checkpoint_store", None) is not None:
+            return self._mission_checkpoint_store
+        store = getattr(self, "store", None)
+        state_root = store.state_root if store and hasattr(store, "state_root") else None
+        persistence_enabled = (
+            getattr(self.settings, "supervisor_persistence_enabled", False)
+            if hasattr(self, "settings")
+            else False
+        )
+        checkpoint_store = MissionCheckpointStore(
+            root=state_root,
+            persistence_enabled=persistence_enabled,
+        )
+        self._mission_checkpoint_store = checkpoint_store
+        return checkpoint_store
+
+    def _build_resumable_checkpoint_snapshot(
+        self,
+        command: SupervisorCommand,
+    ) -> dict[str, Any]:
+        active_task = next((t for t in command.tasks if t.status == "running"), None)
+        current_task_id = active_task.id if active_task else None
+
+        tasks_snap = [
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "attempts": t.attempts,
+                "assigned_agent": t.assigned_agent,
+                "verification": t.verification,
+                "exact_files": list(t.exact_files) if t.exact_files else [],
+                "continuation_resumes": t.continuation_resumes,
+                "recovery_reason": t.recovery_reason,
+            }
+            for t in command.tasks
+        ]
+
+        decisions_snap = [
+            {
+                "id": d.id,
+                "question": d.question,
+                "status": d.status,
+                "answer": d.answer,
+            }
+            for d in command.decisions
+        ]
+
+        snapshot = {
+            "id": command.id,
+            "goal": command.goal,
+            "status": command.status,
+            "autonomy_mode": command.autonomy_mode,
+            "auto_run": command.auto_run,
+            "plan_text": command.plan_text,
+            "tasks": tasks_snap,
+            "decisions": decisions_snap,
+            "execution_layers": command.execution_layers,
+            "current_task_id": current_task_id,
+            "control_version": command.control_version,
+            "resume_count": command.resume_count,
+        }
+        return snapshot
+
+    async def _create_mission_checkpoint(
+        self,
+        command: SupervisorCommand,
+        *,
+        reason: str,
+        resumable: bool,
+        resume_target_status: str | None,
+        current_task_id: str | None = None,
+    ) -> MissionCheckpointRecord:
+        checkpoint_store = self._get_mission_checkpoint_store()
+        now = datetime.now(timezone.utc)
+        snapshot = self._build_resumable_checkpoint_snapshot(command)
+
+        pending_apps = [
+            app_t.id for app_t in command.tasks
+            if app_t.status == "awaiting_approval" or getattr(app_t, "pending_approval_id", None)
+        ]
+
+        rec = checkpoint_store.append(
+            mission_id=command.id,
+            reason=reason,
+            created_at=now,
+            status_at_checkpoint=command.status,
+            resume_target_status=resume_target_status,
+            current_task_id=current_task_id,
+            pending_approval_ids=pending_apps,
+            state_version=command.control_version,
+            state_snapshot=snapshot,
+            resumable=resumable,
+        )
+
+        summary_payload = {
+            "checkpoint_id": rec.checkpoint_id,
+            "checkpoint_sequence": rec.sequence,
+            "checkpoint_hash": rec.checkpoint_hash,
+            "state_hash": rec.state_hash,
+            "reason": rec.reason,
+            "resumable": rec.resumable,
+            "status_at_checkpoint": rec.status_at_checkpoint,
+            "resume_target_status": rec.resume_target_status,
+            "current_task_id": rec.current_task_id,
+            "pending_approval_count": len(rec.pending_approval_ids),
+            "snapshot_size_bytes": rec.snapshot_size_bytes,
+        }
+
+        self._event(
+            command,
+            type="checkpoint_created",
+            message=f"Created mission checkpoint {rec.checkpoint_id} (seq {rec.sequence})",
+            task_id=current_task_id,
+            data=summary_payload,
+        )
+        await self.store.put(command)
+
+        return rec
+
+    async def _pause_at_safe_boundary_if_requested(
+        self,
+        command: SupervisorCommand,
+        *,
+        boundary: str,
+        current_task_id: str | None = None,
+    ) -> bool:
+        if not command.pause_requested:
+            return False
+        if command.status in {"completed", "failed", "cancelled", "reverted"}:
+            command.pause_requested = False
+            await self.store.put(command)
+            return False
+
+        target_status = command.status
+        if target_status == "running":
+            target_status = "ready"
+
+        now = datetime.now(timezone.utc)
+        command.status = "paused"
+        command.pause_requested = False
+        command.paused_at = now
+        command.resume_target_status = target_status
+        command.control_version += 1
+        await self.store.put(command)
+
+        rec = await self._create_mission_checkpoint(
+            command=command,
+            reason="pause_boundary",
+            resumable=True,
+            resume_target_status=target_status,
+            current_task_id=current_task_id,
+        )
+
+        command.active_checkpoint_id = rec.checkpoint_id
+        self._clear_operation(command)
+        self._event(
+            command,
+            type="mission_paused",
+            message=f"Mission paused at boundary '{boundary}'. Active checkpoint: {rec.checkpoint_id}",
+            task_id=current_task_id,
+            data={
+                "boundary": boundary,
+                "active_checkpoint_id": rec.checkpoint_id,
+                "resume_target_status": target_status,
+                "control_version": command.control_version,
+            },
+        )
+        await self.store.put(command)
+        return True
+
+    async def request_mission_pause(
+        self,
+        command_id: str,
+        *,
+        reason: str | None = None,
+        expected_control_version: int | None = None,
+    ) -> MissionControlResponse:
+        async with self._command_lock(command_id):
+            command = await self.store.get(command_id)
+            if command.status in {"completed", "failed", "cancelled", "reverted"}:
+                raise ValueError(f"Terminal command '{command_id}' pause edilemez.")
+
+            if expected_control_version is not None and command.control_version != expected_control_version:
+                raise ValueError(
+                    f"Control version mismatch: expected {expected_control_version}, current is {command.control_version}."
+                )
+
+            if command.status == "paused":
+                return MissionControlResponse(
+                    mission_id=command_id,
+                    command_status=command.status,
+                    pause_requested=False,
+                    active_checkpoint_id=command.active_checkpoint_id,
+                    control_version=command.control_version,
+                    resume_count=command.resume_count,
+                    message="Mission zaten paused durumunda.",
+                )
+
+            if command.pause_requested:
+                return MissionControlResponse(
+                    mission_id=command_id,
+                    command_status=command.status,
+                    pause_requested=True,
+                    active_checkpoint_id=command.active_checkpoint_id,
+                    control_version=command.control_version,
+                    resume_count=command.resume_count,
+                    message="Pause talebi zaten alındı, güvenli sınır bekleniyor.",
+                )
+
+            now = datetime.now(timezone.utc)
+            command.pause_requested = True
+            command.pause_requested_at = now
+            command.pause_reason = (reason or "").strip()[:2000] if reason else None
+            command.control_version += 1
+
+            self._event(
+                command,
+                type="mission_pause_requested",
+                message=f"Mission pause requested: {command.pause_reason or 'No reason provided'}",
+                data={
+                    "reason": command.pause_reason,
+                    "control_version": command.control_version,
+                },
+            )
+            await self.store.put(command)
+
+            if command.status in {"ready", "awaiting_approval", "waiting_decision"}:
+                await self._pause_at_safe_boundary_if_requested(
+                    command,
+                    boundary="immediate_idle",
+                )
+
+            return MissionControlResponse(
+                mission_id=command_id,
+                command_status=command.status,
+                pause_requested=command.pause_requested,
+                active_checkpoint_id=command.active_checkpoint_id,
+                control_version=command.control_version,
+                resume_count=command.resume_count,
+                message="Pause talebi kaydedildi." if command.pause_requested else "Mission paused durumuna geçti.",
+            )
+
+    async def create_mission_checkpoint(
+        self,
+        command_id: str,
+    ) -> MissionCheckpointRecord:
+        async with self._command_lock(command_id):
+            command = await self.store.get(command_id)
+            if command.status == "running" and any(t.status == "running" for t in command.tasks):
+                raise ValueError("Aktif çalışan görev esnasında manuel checkpoint oluşturulamaz.")
+
+            rec = await self._create_mission_checkpoint(
+                command=command,
+                reason="manual",
+                resumable=False,
+                resume_target_status=None,
+            )
+            return rec
+
+    async def resume_mission(
+        self,
+        command_id: str,
+        *,
+        checkpoint_id: str | None = None,
+        expected_control_version: int | None = None,
+    ) -> MissionControlResponse:
+        async with self._command_lock(command_id):
+            command = await self.store.get(command_id)
+            if command.status != "paused":
+                raise ValueError(f"Command '{command_id}' paused durumunda değil (mevcut: {command.status}).")
+
+            if not command.active_checkpoint_id:
+                raise ValueError(f"Command '{command_id}' için aktif checkpoint bulunamadı.")
+
+            if checkpoint_id and checkpoint_id != command.active_checkpoint_id:
+                raise ValueError(
+                    f"Checkpoint mismatch: requested '{checkpoint_id}', active is '{command.active_checkpoint_id}'."
+                )
+
+            if expected_control_version is not None and command.control_version != expected_control_version:
+                raise ValueError(
+                    f"Control version mismatch: expected {expected_control_version}, current is {command.control_version}."
+                )
+
+            checkpoint_store = self._get_mission_checkpoint_store()
+            checkpoint = checkpoint_store.get_checkpoint(
+                mission_id=command_id,
+                checkpoint_id=command.active_checkpoint_id,
+            )
+            if checkpoint is None:
+                raise KeyError(f"Active checkpoint '{command.active_checkpoint_id}' store'da bulunamadı.")
+
+            if not checkpoint.resumable:
+                raise ValueError(f"Checkpoint '{checkpoint.checkpoint_id}' resumable değil.")
+
+            snapshot = checkpoint_store.get_checkpoint_snapshot(
+                mission_id=command_id,
+                checkpoint_id=command.active_checkpoint_id,
+            )
+            if snapshot is None:
+                raise KeyError(f"Active checkpoint snapshot '{command.active_checkpoint_id}' okunamadı.")
+
+            calc_state_hash, _ = compute_state_hash(snapshot)
+            current_snapshot = self._build_resumable_checkpoint_snapshot(command)
+            current_state_hash, _ = compute_state_hash(current_snapshot)
+
+            if current_state_hash != calc_state_hash or current_state_hash != checkpoint.state_hash:
+                raise ValueError("State hash conflict: mission durumu checkpoint snapshot'ı ile eşleşmiyor.")
+
+            target_status = command.resume_target_status or "ready"
+
+            self._event(
+                command,
+                type="mission_resume_started",
+                message=f"Resuming mission from checkpoint {checkpoint.checkpoint_id}",
+                data={
+                    "checkpoint_id": checkpoint.checkpoint_id,
+                    "resume_target_status": target_status,
+                    "control_version": command.control_version + 1,
+                },
+            )
+
+            command.active_checkpoint_id = None
+            command.pause_requested = False
+            command.pause_requested_at = None
+            command.pause_reason = None
+            command.paused_at = None
+            command.resume_target_status = None
+            command.resume_count += 1
+            command.control_version += 1
+            command.status = target_status
+            await self.store.put(command)
+
+            self._event(
+                command,
+                type="mission_resumed",
+                message=f"Mission resumed successfully (target status: {target_status}).",
+                data={
+                    "checkpoint_id": checkpoint.checkpoint_id,
+                    "target_status": target_status,
+                    "resume_count": command.resume_count,
+                    "control_version": command.control_version,
+                },
+            )
+            await self.store.put(command)
+
+            if target_status in {"ready", "running"}:
+                self._spawn(
+                    self.advance(
+                        command_id=command.id,
+                        background=True,
+                    ),
+                    command_id=command.id,
+                    operation="resume_advance",
+                )
+
+            return MissionControlResponse(
+                mission_id=command_id,
+                command_status=command.status,
+                pause_requested=False,
+                active_checkpoint_id=None,
+                control_version=command.control_version,
+                resume_count=command.resume_count,
+                message="Mission başarıyla devralındı ve sürdürüldü.",
+            )
 
     async def _record_execution_receipt(
         self,
@@ -7993,6 +8375,66 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             raise KeyError(f"Execution receipt '{receipt_id}' command '{command_id}' için bulunamadı.")
         return receipt
 
+    async def list_mission_checkpoints(
+        self,
+        command_id: str,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+    ) -> MissionCheckpointPage:
+        command = await self.get(command_id)
+        checkpoint_store = self._get_mission_checkpoint_store()
 
+        if checkpoint_store.has_checkpoints(mission_id=command_id):
+            raw_recs = checkpoint_store.list_checkpoints(
+                mission_id=command_id,
+                after_sequence=after_sequence,
+                limit=limit + 1,
+            )
+            has_more = len(raw_recs) > limit
+            recs = raw_recs[:limit]
 
+            next_after = recs[-1].sequence if (has_more and recs) else None
+            last_seq = recs[-1].sequence if recs else 0
+            last_hash = recs[-1].checkpoint_hash if recs else None
 
+            return MissionCheckpointPage(
+                mission_id=command_id,
+                checkpoints=recs,
+                count=len(recs),
+                after_sequence=after_sequence,
+                next_after_sequence=next_after,
+                has_more=has_more,
+                source="checkpoint_store",
+                integrity_verified=True,
+                last_sequence=last_seq,
+                last_checkpoint_hash=last_hash,
+            )
+
+        return MissionCheckpointPage(
+            mission_id=command_id,
+            checkpoints=[],
+            count=0,
+            after_sequence=after_sequence,
+            next_after_sequence=None,
+            has_more=False,
+            source="empty",
+            integrity_verified=True,
+            last_sequence=0,
+            last_checkpoint_hash=None,
+        )
+
+    async def get_mission_checkpoint(
+        self,
+        command_id: str,
+        checkpoint_id: str,
+    ) -> MissionCheckpointRecord:
+        command = await self.get(command_id)
+        checkpoint_store = self._get_mission_checkpoint_store()
+        rec = checkpoint_store.get_checkpoint(
+            mission_id=command_id,
+            checkpoint_id=checkpoint_id,
+        )
+        if rec is None:
+            raise KeyError(f"Mission checkpoint '{checkpoint_id}' command '{command_id}' için bulunamadı.")
+        return rec

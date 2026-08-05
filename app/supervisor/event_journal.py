@@ -66,7 +66,12 @@ def canonical_event_kind(event_type: str) -> str:
         return "approval"
 
     # 2. checkpoint
-    if et.startswith("checkpoint_") or et in ("mission_paused", "mission_resumed"):
+    if (
+        et.startswith("checkpoint_")
+        or et.startswith("mission_pause_")
+        or et.startswith("mission_resume_")
+        or et in ("mission_paused", "mission_resumed")
+    ):
         return "checkpoint"
 
     # 3. recovery

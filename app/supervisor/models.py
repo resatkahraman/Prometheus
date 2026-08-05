@@ -18,6 +18,7 @@ CommandStatus = Literal[
     "reviewing",
     "completed",
     "failed",
+    "paused",
 ]
 
 TaskCommandStatus = Literal[
@@ -211,6 +212,17 @@ class SupervisorCommand(BaseModel):
 
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
+
+    pause_requested: bool = False
+    pause_requested_at: datetime | None = None
+    pause_reason: str | None = None
+
+    paused_at: datetime | None = None
+    active_checkpoint_id: str | None = None
+    resume_target_status: str | None = None
+
+    control_version: int = 0
+    resume_count: int = 0
 
 
 class SupervisorCreateRequest(BaseModel):
@@ -496,4 +508,105 @@ class ExecutionReceiptSummary(BaseModel):
     affected_file_count: int
     artifact_count: int
     receipt_hash: str
+
+
+class MissionCheckpointRecord(BaseModel):
+    schema_version: int = 1
+
+    checkpoint_id: str
+    mission_id: str
+    sequence: int
+
+    created_at: datetime
+    reason: Literal[
+        "manual",
+        "pause_boundary",
+        "pre_execution",
+        "post_execution",
+        "approval_boundary",
+        "system",
+    ]
+
+    status_at_checkpoint: str
+    resume_target_status: str | None = None
+    current_task_id: str | None = None
+    pending_approval_ids: list[str] = Field(default_factory=list)
+
+    state_version: int
+    state_hash: str
+    snapshot_size_bytes: int
+
+    resumable: bool
+    consumed_by_resume: bool = False
+
+    previous_checkpoint_hash: str | None = None
+    checkpoint_hash: str
+
+    @model_validator(mode="after")
+    def validate_checkpoint(self) -> "MissionCheckpointRecord":
+        if self.schema_version != 1:
+            raise ValueError("schema_version must be 1")
+        if self.sequence < 1:
+            raise ValueError("sequence must be >= 1")
+        if self.state_version < 0:
+            raise ValueError("state_version must be >= 0")
+        if self.snapshot_size_bytes < 0:
+            raise ValueError("snapshot_size_bytes must be >= 0")
+        if not self.checkpoint_id or not self.checkpoint_id.strip():
+            raise ValueError("checkpoint_id must not be empty")
+        if not self.mission_id or not self.mission_id.strip():
+            raise ValueError("mission_id must not be empty")
+        if not self.state_hash.startswith("sha256:") or len(self.state_hash) != 71:
+            raise ValueError("state_hash must be sha256:<64 hex>")
+        if not self.checkpoint_hash.startswith("sha256:") or len(self.checkpoint_hash) != 71:
+            raise ValueError("checkpoint_hash must be sha256:<64 hex>")
+        if self.sequence == 1 and self.previous_checkpoint_hash is not None:
+            raise ValueError("sequence 1 cannot have previous_checkpoint_hash")
+        if self.sequence > 1:
+            if not self.previous_checkpoint_hash or not self.previous_checkpoint_hash.startswith("sha256:"):
+                raise ValueError("sequence > 1 requires valid previous_checkpoint_hash")
+
+        # Deduplicate list preserving order
+        seen = set()
+        clean_apps = []
+        for item in self.pending_approval_ids:
+            if item and item not in seen:
+                seen.add(item)
+                clean_apps.append(item)
+        self.pending_approval_ids = clean_apps
+
+        return self
+
+
+class MissionCheckpointPage(BaseModel):
+    mission_id: str
+    checkpoints: list[MissionCheckpointRecord]
+    count: int
+    after_sequence: int
+    next_after_sequence: int | None = None
+    has_more: bool = False
+    source: Literal["checkpoint_store", "empty"]
+    integrity_verified: bool
+    last_sequence: int
+    last_checkpoint_hash: str | None = None
+
+
+class MissionCheckpointIntegrity(BaseModel):
+    mission_id: str
+    valid: bool
+    checkpoint_count: int
+    last_sequence: int
+    last_checkpoint_hash: str | None = None
+    error_code: str | None = None
+    error_sequence: int | None = None
+
+
+class MissionControlResponse(BaseModel):
+    mission_id: str
+    command_status: str
+    pause_requested: bool
+    active_checkpoint_id: str | None = None
+    control_version: int
+    resume_count: int
+    message: str
 

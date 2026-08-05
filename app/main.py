@@ -3,9 +3,11 @@ import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from pydantic import BaseModel
 
 from app.agent.engine import AgentEngine
 from app.arena.catalog import list_scenarios
@@ -82,11 +84,20 @@ from app.planning.integrity import validate_planning_document
 from app.planning.parser import PlanningParseError, parse_planning_document
 from app.storage.operations import OperationsStore
 from app.supervisor.diagnostics import build_command_diagnostics
+from app.supervisor.checkpoints import (
+    MissionCheckpointError,
+    MissionCheckpointIntegrityError,
+    DuplicateMissionCheckpointError,
+)
 from app.supervisor.execution_receipts import ExecutionReceiptIntegrityError
 from app.supervisor.event_journal import MissionEventIntegrityError
 from app.supervisor.models import (
     ExecutionReceipt,
     ExecutionReceiptPage,
+    MissionCheckpointIntegrity,
+    MissionCheckpointPage,
+    MissionCheckpointRecord,
+    MissionControlResponse,
     MissionEventPage,
     MissionStateProjection,
     SupervisorCommand,
@@ -156,6 +167,20 @@ from app.tools.base import ToolError
 from app.tools.registry import build_default_tool_registry
 from app.workspace.policy import WorkspacePolicy
 from app.branding import BRAND_NAME, BRAND_STAGE, BRAND_VERSION
+
+
+class PauseMissionRequest(BaseModel):
+    reason: str | None = None
+    expected_control_version: int | None = None
+
+
+class ResumeMissionRequest(BaseModel):
+    checkpoint_id: str | None = None
+    expected_control_version: int | None = None
+
+
+class CreateMissionCheckpointRequest(BaseModel):
+    reason: Literal["manual"] = "manual"
 
 
 @asynccontextmanager
@@ -1812,6 +1837,128 @@ async def read_supervisor_execution_receipt(
         raise HTTPException(
             status_code=409,
             detail="Execution receipt bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/checkpoints",
+    response_model=MissionCheckpointPage,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_checkpoints(
+    command_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> MissionCheckpointPage:
+    try:
+        return await app.state.supervisor.list_mission_checkpoints(
+            command_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MissionCheckpointIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission checkpoint bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/checkpoints/{checkpoint_id}",
+    response_model=MissionCheckpointRecord,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_checkpoint(
+    command_id: str,
+    checkpoint_id: str,
+) -> MissionCheckpointRecord:
+    try:
+        return await app.state.supervisor.get_mission_checkpoint(
+            command_id=command_id,
+            checkpoint_id=checkpoint_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except MissionCheckpointIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission checkpoint bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/checkpoints",
+    response_model=MissionCheckpointRecord,
+    tags=["supervisor"],
+)
+async def create_supervisor_mission_checkpoint(
+    command_id: str,
+    body: CreateMissionCheckpointRequest = Body(default_factory=CreateMissionCheckpointRequest),
+) -> MissionCheckpointRecord:
+    try:
+        return await app.state.supervisor.create_mission_checkpoint(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except MissionCheckpointIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission checkpoint bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/pause",
+    response_model=MissionControlResponse,
+    tags=["supervisor"],
+)
+async def pause_supervisor_mission(
+    command_id: str,
+    body: PauseMissionRequest = Body(default_factory=PauseMissionRequest),
+) -> MissionControlResponse:
+    try:
+        return await app.state.supervisor.request_mission_pause(
+            command_id=command_id,
+            reason=body.reason,
+            expected_control_version=body.expected_control_version,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except MissionCheckpointIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission checkpoint bütünlüğü doğrulanamadı.",
+        ) from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/resume",
+    response_model=MissionControlResponse,
+    tags=["supervisor"],
+)
+async def resume_supervisor_mission(
+    command_id: str,
+    body: ResumeMissionRequest = Body(default_factory=ResumeMissionRequest),
+) -> MissionControlResponse:
+    try:
+        return await app.state.supervisor.resume_mission(
+            command_id=command_id,
+            checkpoint_id=body.checkpoint_id,
+            expected_control_version=body.expected_control_version,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except MissionCheckpointIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Mission checkpoint bütünlüğü doğrulanamadı.",
         ) from exc
 
 

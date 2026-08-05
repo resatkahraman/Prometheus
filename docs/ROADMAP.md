@@ -7,7 +7,7 @@
 - [x] TASK-039: Pandora Project Run Remote Triggering
 - [x] TASK-040: Canonical Mission Event Journal
 - [x] TASK-041: Immutable Execution Receipts
-- [ ] TASK-042: Mission Checkpoint, Pause and Resume
+- [x] TASK-042: Mission Checkpoint, Pause and Resume
 - [ ] TASK-043: Recovery and Failure Classification
 - [ ] TASK-044: Mission History and Post-Run Summary
 - [ ] TASK-045: Session Branching
