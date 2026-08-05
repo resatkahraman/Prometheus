@@ -75,7 +75,13 @@ def canonical_event_kind(event_type: str) -> str:
         return "checkpoint"
 
     # 3. recovery
-    if et.startswith("recovery_") or et.startswith("retry_"):
+    if (
+        et.startswith("recovery_")
+        or et.startswith("retry_")
+        or et.startswith("mission_failure_")
+        or et.startswith("failure_classification_")
+        or et.startswith("mission_recovery_")
+    ):
         return "recovery"
 
     # 4. tool

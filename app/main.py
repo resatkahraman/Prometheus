@@ -98,6 +98,9 @@ from app.supervisor.models import (
     MissionCheckpointPage,
     MissionCheckpointRecord,
     MissionControlResponse,
+    MissionRecoveryStatusResponse,
+    RecoverMissionRequest,
+    RecoverMissionResponse,
     MissionEventPage,
     MissionStateProjection,
     SupervisorCommand,
@@ -1960,6 +1963,45 @@ async def resume_supervisor_mission(
             status_code=409,
             detail="Mission checkpoint bütünlüğü doğrulanamadı.",
         ) from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/recovery",
+    response_model=MissionRecoveryStatusResponse,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_recovery(
+    command_id: str,
+) -> MissionRecoveryStatusResponse:
+    try:
+        return await app.state.supervisor.get_mission_recovery_status(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Mission bulunamadı.") from exc
+    except (MissionCheckpointIntegrityError, MissionEventIntegrityError, ExecutionReceiptIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail="Mission bütünlüğü doğrulanamadı.") from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/recover",
+    response_model=RecoverMissionResponse,
+    tags=["supervisor"],
+)
+async def recover_supervisor_mission(
+    command_id: str,
+    payload: RecoverMissionRequest,
+) -> RecoverMissionResponse:
+    try:
+        return await app.state.supervisor.recover_mission(
+            command_id,
+            failure_id=payload.failure_id,
+            expected_control_version=payload.expected_control_version,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Mission veya recovery görevi bulunamadı.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)[:500]) from exc
+    except (MissionCheckpointIntegrityError, MissionEventIntegrityError, ExecutionReceiptIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail="Mission bütünlüğü doğrulanamadı.") from exc
 
 
 @app.post(

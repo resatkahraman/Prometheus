@@ -78,6 +78,12 @@ from app.supervisor.event_journal import (
     compute_canonical_event_hash,
     sanitize_payload,
 )
+from app.supervisor.recovery import (
+    FailureSignal,
+    MAX_MISSION_RECOVERIES,
+    MAX_RECOVERY_ATTEMPTS_PER_FAILURE,
+    classify_mission_failure,
+)
 from app.supervisor.models import (
     ExecutionReceipt,
     ExecutionReceiptIntegrity,
@@ -91,6 +97,9 @@ from app.supervisor.models import (
     MissionEventPage,
     MissionEventRecord,
     MissionStateProjection,
+    MissionFailureClassification,
+    MissionRecoveryStatusResponse,
+    RecoverMissionResponse,
     SupervisorApprovalRecord,
     SupervisorCommand,
     SupervisorDecision,
@@ -579,6 +588,305 @@ class SupervisorService:
                 resume_count=command.resume_count,
                 message="Mission başarıyla devralındı ve sürdürüldü.",
             )
+
+    async def _record_mission_failure(
+        self,
+        *,
+        command: SupervisorCommand,
+        phase: str,
+        error_code: str,
+        safe_message: str,
+        task: SupervisorTask | None = None,
+        source_receipt_id: str | None = None,
+        exception: BaseException | None = None,
+        receipt_outcome: str | None = None,
+        verification_failed: bool = False,
+    ) -> MissionFailureClassification:
+        classification = classify_mission_failure(
+            FailureSignal(
+                mission_id=command.id,
+                phase=phase,
+                error_code=error_code,
+                safe_message=safe_message,
+                task_id=task.id if task else None,
+                source_receipt_id=source_receipt_id,
+                task_attempt=task.attempts if task else 0,
+                exception=exception,
+                receipt_outcome=receipt_outcome,
+                verification_failed=verification_failed,
+            ),
+            mission_recovery_count=command.recovery_count,
+        )
+        latest = command.latest_failure
+        if (
+            latest is not None
+            and latest.failure_fingerprint == classification.failure_fingerprint
+            and command.recovery_status in {"eligible", "blocked", "exhausted"}
+        ):
+            return latest
+
+        command.latest_failure = classification
+        command.recovery_attempts_for_failure = 0
+        command.recovery_checkpoint_id = None
+        command.recovery_task_id = None
+        command.recovery_started_at = None
+        command.recovery_completed_at = None
+        command.recovery_status = "eligible" if classification.recoverable else "blocked"
+        if task is not None:
+            task.recovery_reason = (
+                task.recovery_reason
+                or f"mission_failure:{classification.category}"[:160]
+            )
+
+        self._event(
+            command,
+            type="mission_failure_classified",
+            task_id=classification.task_id,
+            message="Mission failure deterministically classified.",
+            data={
+                "failure_id": classification.failure_id,
+                "failure_fingerprint": classification.failure_fingerprint,
+                "task_id": classification.task_id,
+                "source_receipt_id": classification.source_receipt_id,
+                "phase": classification.phase,
+                "category": classification.category,
+                "severity": classification.severity,
+                "error_code": classification.error_code,
+                "retryable": classification.retryable,
+                "recoverable": classification.recoverable,
+                "recommended_action": classification.recommended_action,
+                "task_attempt": classification.task_attempt,
+                "mission_recovery_count": classification.mission_recovery_count,
+            },
+        )
+        await self.store.put(command)
+        return classification
+
+    def _recovery_blocked_reason(
+        self,
+        command: SupervisorCommand,
+    ) -> str | None:
+        failure = command.latest_failure
+        if failure is None:
+            return "no_failure"
+        if not failure.recoverable or failure.recommended_action != "retry_task":
+            return "failure_not_recoverable"
+        if command.recovery_status != "eligible":
+            return f"recovery_{command.recovery_status}"
+        if command.recovery_attempts_for_failure >= MAX_RECOVERY_ATTEMPTS_PER_FAILURE:
+            return "failure_recovery_limit_exhausted"
+        if command.recovery_count >= MAX_MISSION_RECOVERIES:
+            return "mission_recovery_limit_exhausted"
+        if command.pause_requested or command.status == "paused" or command.active_checkpoint_id:
+            return "mission_resume_required"
+        if self._active_task(command) is not None:
+            return "active_task"
+        if command.active_operation:
+            return "active_operation"
+        if any(key[0] == command.id and not job.done() for key, job in self._background_jobs.items()):
+            return "active_background_job"
+        task = next((item for item in command.tasks if item.id == failure.task_id), None)
+        if task is None:
+            return "recovery_task_not_found"
+        if task.status not in {"failed", "rework_required"}:
+            return "invalid_task_state"
+        if task.attempts >= self.settings.supervisor_max_task_attempts:
+            return "task_attempt_limit_exhausted"
+        return None
+
+    async def get_mission_recovery_status(
+        self,
+        command_id: str,
+    ) -> MissionRecoveryStatusResponse:
+        command = await self.store.get(command_id)
+        blocked_reason = self._recovery_blocked_reason(command)
+        return MissionRecoveryStatusResponse(
+            mission_id=command.id,
+            command_status=command.status,
+            recovery_status=command.recovery_status,
+            latest_failure=command.latest_failure,
+            recovery_attempts_for_failure=command.recovery_attempts_for_failure,
+            recovery_count=command.recovery_count,
+            recovery_checkpoint_id=command.recovery_checkpoint_id,
+            recovery_task_id=command.recovery_task_id,
+            recovery_started_at=command.recovery_started_at,
+            recovery_completed_at=command.recovery_completed_at,
+            control_version=command.control_version,
+            can_recover=blocked_reason is None,
+            blocked_reason=blocked_reason,
+        )
+
+    @staticmethod
+    def _recover_response(
+        command: SupervisorCommand,
+        *,
+        accepted: bool,
+        scheduled: bool,
+        idempotent: bool,
+        message: str,
+    ) -> RecoverMissionResponse:
+        failure = command.latest_failure
+        if failure is None or not failure.task_id:
+            raise ValueError("Mission için görev bağlı kurtarılabilir hata yok.")
+        return RecoverMissionResponse(
+            mission_id=command.id,
+            failure_id=failure.failure_id,
+            task_id=failure.task_id,
+            accepted=accepted,
+            scheduled=scheduled,
+            idempotent=idempotent,
+            command_status=command.status,
+            recovery_status=command.recovery_status,
+            recovery_attempts_for_failure=command.recovery_attempts_for_failure,
+            recovery_count=command.recovery_count,
+            recovery_checkpoint_id=command.recovery_checkpoint_id,
+            control_version=command.control_version,
+            message=message,
+        )
+
+    async def recover_mission(
+        self,
+        command_id: str,
+        *,
+        failure_id: str | None = None,
+        expected_control_version: int | None = None,
+    ) -> RecoverMissionResponse:
+        async with self._command_lock(command_id):
+            command = await self.store.get(command_id)
+            failure = command.latest_failure
+            if failure is None:
+                raise ValueError("Mission için sınıflandırılmış hata yok.")
+            if failure_id is not None and failure_id != failure.failure_id:
+                raise ValueError("Failure identity mismatch.")
+            if expected_control_version is not None and expected_control_version != command.control_version:
+                raise ValueError("Control version mismatch.")
+            if command.recovery_status in {"scheduled", "running", "recovered"}:
+                return self._recover_response(
+                    command,
+                    accepted=True,
+                    scheduled=command.recovery_status in {"scheduled", "running"},
+                    idempotent=True,
+                    message="Recovery request was already accepted.",
+                )
+
+            blocked_reason = self._recovery_blocked_reason(command)
+            if blocked_reason is not None:
+                if blocked_reason.endswith("limit_exhausted"):
+                    command.recovery_status = "exhausted"
+                    await self.store.put(command)
+                raise ValueError(f"Mission recovery blocked: {blocked_reason}.")
+
+            task = next((item for item in command.tasks if item.id == failure.task_id), None)
+            if task is None:
+                raise KeyError("Recovery task not found.")
+            checkpoint = await self._create_mission_checkpoint(
+                command,
+                reason="system",
+                resumable=False,
+                resume_target_status=None,
+                current_task_id=task.id,
+            )
+            command.recovery_status = "scheduled"
+            command.recovery_attempts_for_failure += 1
+            command.recovery_count += 1
+            command.recovery_checkpoint_id = checkpoint.checkpoint_id
+            command.recovery_task_id = task.id
+            command.recovery_started_at = datetime.now(timezone.utc)
+            command.recovery_completed_at = None
+            command.control_version += 1
+            task.status = "rework_required"
+            if task.recovery_reason and task.recovery_reason.startswith("mission_failure:"):
+                task.recovery_reason = None
+            self._refresh_task_states(command)
+            recovery_payload = {
+                "failure_id": failure.failure_id,
+                "task_id": task.id,
+                "category": failure.category,
+                "recovery_attempts_for_failure": command.recovery_attempts_for_failure,
+                "recovery_count": command.recovery_count,
+                "recovery_checkpoint_id": checkpoint.checkpoint_id,
+                "control_version": command.control_version,
+                "scheduled": False,
+            }
+            self._event(
+                command,
+                type="mission_recovery_started",
+                task_id=task.id,
+                message="Explicit Mission recovery accepted.",
+                data=recovery_payload,
+            )
+            await self.store.put(command)
+            spawned = self._spawn(
+                self.advance(command_id=command.id, background=True),
+                command_id=command.id,
+                operation="mission_recovery",
+            )
+            if not spawned:
+                equivalent = self._background_jobs.get((command.id, "mission_recovery"))
+                if equivalent is not None and not equivalent.done():
+                    return self._recover_response(
+                        command,
+                        accepted=True,
+                        scheduled=True,
+                        idempotent=True,
+                        message="Equivalent recovery is already scheduled.",
+                    )
+                command.recovery_status = "blocked"
+                self._event(
+                    command,
+                    type="mission_recovery_blocked",
+                    task_id=task.id,
+                    message="Mission recovery could not be scheduled.",
+                    data={**recovery_payload, "scheduled": False},
+                )
+                await self.store.put(command)
+                raise ValueError("Mission recovery scheduling failed.")
+            self._event(
+                command,
+                type="mission_recovery_scheduled",
+                task_id=task.id,
+                message="Mission recovery scheduled through Supervisor advance.",
+                data={**recovery_payload, "scheduled": True},
+            )
+            await self.store.put(command)
+            return self._recover_response(
+                command,
+                accepted=True,
+                scheduled=True,
+                idempotent=False,
+                message="Mission recovery scheduled.",
+            )
+
+    async def _finalize_mission_recovery_if_needed(
+        self,
+        *,
+        command: SupervisorCommand,
+        task: SupervisorTask,
+    ) -> None:
+        if command.recovery_status not in {"scheduled", "running"} or task.id != command.recovery_task_id:
+            return
+        if task.status not in {"completed", "reviewing", "awaiting_approval"}:
+            return
+        command.recovery_status = "recovered"
+        command.recovery_completed_at = datetime.now(timezone.utc)
+        failure = command.latest_failure
+        self._event(
+            command,
+            type="mission_recovery_completed",
+            task_id=task.id,
+            message="Mission recovery restored execution continuity.",
+            data={
+                "failure_id": failure.failure_id if failure else "unknown",
+                "task_id": task.id,
+                "category": failure.category if failure else "unknown",
+                "recovery_attempts_for_failure": command.recovery_attempts_for_failure,
+                "recovery_count": command.recovery_count,
+                "recovery_checkpoint_id": command.recovery_checkpoint_id,
+                "control_version": command.control_version,
+                "scheduled": False,
+            },
+        )
+        await self.store.put(command)
 
     async def _record_execution_receipt(
         self,
@@ -6183,6 +6491,10 @@ RET verirsen somut yeniden çalışma görevini yaz."""
         if task is None:
             raise KeyError("Görev bulunamadı.")
 
+        if command.recovery_status == "scheduled" and command.recovery_task_id == task.id:
+            command.recovery_status = "running"
+            await self.store.put(command)
+
         if task.exact_files:
             res_cmd = await self._advance_structured_task(
                 command_id=command_id,
@@ -6192,7 +6504,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             completed_at = datetime.now(timezone.utc)
             task_ref = next((t for t in res_cmd.tasks if t.id == task_id), task)
             outcome = "succeeded" if task_ref.status in {"completed", "reviewing", "awaiting_approval"} else ("cancelled" if task_ref.status == "cancelled" else "failed")
-            await self._record_execution_receipt(
+            receipt = await self._record_execution_receipt(
                 mission_id=command_id,
                 execution_kind="worker" if task_ref.assigned_agent else "task",
                 actor_kind="worker",
@@ -6205,6 +6517,36 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                 request_summary=f"Execution of task '{task_ref.title}'",
                 affected_files=task_ref.exact_files or [],
             )
+            if outcome == "failed":
+                if res_cmd.recovery_status in {"scheduled", "running"} and res_cmd.recovery_task_id == task_ref.id:
+                    self._event(
+                        res_cmd,
+                        type="mission_recovery_failed",
+                        task_id=task_ref.id,
+                        message="Mission recovery execution failed.",
+                        data={
+                            "failure_id": res_cmd.latest_failure.failure_id if res_cmd.latest_failure else "unknown",
+                            "task_id": task_ref.id,
+                            "category": res_cmd.latest_failure.category if res_cmd.latest_failure else "unknown",
+                            "recovery_attempts_for_failure": res_cmd.recovery_attempts_for_failure,
+                            "recovery_count": res_cmd.recovery_count,
+                            "recovery_checkpoint_id": res_cmd.recovery_checkpoint_id,
+                            "control_version": res_cmd.control_version,
+                            "scheduled": False,
+                        },
+                    )
+                await self._record_mission_failure(
+                    command=res_cmd,
+                    phase="verification" if task_ref.verification_failures else "task_execution",
+                    error_code="verification_failed" if task_ref.verification_failures else "internal_error",
+                    safe_message=task_ref.last_approval_message or "Structured task execution failed.",
+                    task=task_ref,
+                    source_receipt_id=receipt.receipt_id,
+                    receipt_outcome=outcome,
+                    verification_failed=bool(task_ref.verification_failures),
+                )
+            else:
+                await self._finalize_mission_recovery_if_needed(command=res_cmd, task=task_ref)
             return res_cmd
 
         request = AgentRequest(
@@ -6227,6 +6569,8 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             usage_task_id=task.id,
         )
 
+        failure_code: str | None = None
+        failure_exception: BaseException | None = None
         try:
             response = await self._await_with_heartbeat(
                 self.agent.run(request),
@@ -6258,6 +6602,8 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             )
             raise
         except TimeoutError as exc:
+            failure_code = "timeout"
+            failure_exception = exc
             command = await self.store.get(command_id)
             task = next(
                 item for item in command.tasks if item.id == task_id
@@ -6282,6 +6628,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                     message=task.last_approval_message,
                 )
         except Exception as exc:
+            failure_exception = exc
             command = await self.store.get(command_id)
             task = next(
                 item for item in command.tasks if item.id == task_id
@@ -6296,12 +6643,14 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             if not reconciled:
                 budget_exhausted = self._is_mission_budget_error(exc)
                 if budget_exhausted:
+                    failure_code = "budget_exhausted"
                     self._mark_task_blocked(
                         task=task,
                         recovery_reason="mission_budget_exhausted",
                         message=self._mission_budget_block_message(exc),
                     )
                 else:
+                    failure_code = "internal_error"
                     task.status = "rework_required"
                     task.recovery_reason = "task_agent_error"
                     task.last_approval_message = (
@@ -6329,13 +6678,22 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                 response=response,
             )
 
+        if failure_code is None and task.status == "failed":
+            failure_code = "internal_error"
+        elif (
+            failure_code is None
+            and task.status == "rework_required"
+            and task.verification_failures > 0
+        ):
+            failure_code = "verification_failed"
+
         self._clear_operation_if(command, operation)
         self._refresh_task_states(command)
         await self.store.put(command)
 
         completed_at = datetime.now(timezone.utc)
         outcome = "succeeded" if task.status in {"completed", "reviewing", "awaiting_approval"} else ("cancelled" if task.status == "cancelled" else "failed")
-        await self._record_execution_receipt(
+        receipt = await self._record_execution_receipt(
             mission_id=command_id,
             execution_kind="worker" if task.assigned_agent else "task",
             actor_kind="worker",
@@ -6348,6 +6706,37 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             request_summary=f"Execution of task '{task.title}'",
             affected_files=task.exact_files or [],
         )
+
+        if outcome == "failed" and failure_code is not None:
+            if command.recovery_status in {"scheduled", "running"} and command.recovery_task_id == task.id:
+                self._event(
+                    command,
+                    type="mission_recovery_failed",
+                    task_id=task.id,
+                    message="Mission recovery execution failed.",
+                    data={
+                        "failure_id": command.latest_failure.failure_id if command.latest_failure else "unknown",
+                        "task_id": task.id,
+                        "category": command.latest_failure.category if command.latest_failure else "unknown",
+                        "recovery_attempts_for_failure": command.recovery_attempts_for_failure,
+                        "recovery_count": command.recovery_count,
+                        "recovery_checkpoint_id": command.recovery_checkpoint_id,
+                        "control_version": command.control_version,
+                        "scheduled": False,
+                    },
+                )
+            await self._record_mission_failure(
+                command=command,
+                phase="task_execution",
+                error_code=failure_code,
+                safe_message=task.last_approval_message or "Task execution failed.",
+                task=task,
+                source_receipt_id=receipt.receipt_id,
+                exception=failure_exception,
+                receipt_outcome=outcome,
+            )
+        else:
+            await self._finalize_mission_recovery_if_needed(command=command, task=task)
 
         return command
 

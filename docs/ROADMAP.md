@@ -8,8 +8,8 @@
 - [x] TASK-040: Canonical Mission Event Journal
 - [x] TASK-041: Immutable Execution Receipts
 - [x] TASK-042: Mission Checkpoint, Pause and Resume
-- [ ] TASK-043: Recovery and Failure Classification
-- [ ] TASK-044: Mission History and Post-Run Summary
+- [x] TASK-043: Mission Recovery and Error Classification
+- [ ] TASK-044: Mission History and Post-Run Summary — next
 - [ ] TASK-045: Session Branching
 - [ ] TASK-046: Project DNA
 - [ ] TASK-047: Decision Memory

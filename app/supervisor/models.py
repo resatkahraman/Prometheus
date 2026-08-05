@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -40,6 +41,24 @@ ApprovalState = Literal[
     "applied",
     "rejected",
     "failed",
+]
+
+MissionFailurePhase = Literal[
+    "planning", "task_execution", "verification", "review", "approval",
+    "checkpoint", "resume", "background", "unknown",
+]
+MissionFailureCategory = Literal[
+    "transient_provider", "rate_limited", "timeout", "dependency_unavailable",
+    "verification_failed", "approval_rejected", "policy_blocked",
+    "state_conflict", "integrity_failure", "cancelled", "invalid_request",
+    "internal_error", "unknown",
+]
+MissionFailureSeverity = Literal["warning", "error", "critical"]
+MissionRecoveryAction = Literal[
+    "retry_task", "resume_checkpoint", "request_approval", "manual_intervention", "none",
+]
+MissionRecoveryStatus = Literal[
+    "idle", "eligible", "scheduled", "running", "recovered", "blocked", "exhausted",
 ]
 
 HandoffType = Literal[
@@ -181,6 +200,50 @@ class SupervisorTask(BaseModel):
     last_agent_response: AgentResponse | None = None
 
 
+class MissionFailureClassification(BaseModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    failure_id: str = Field(min_length=1, max_length=160)
+    failure_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    mission_id: str = Field(min_length=1, max_length=160)
+    task_id: str | None = Field(default=None, max_length=160)
+    source_receipt_id: str | None = Field(default=None, max_length=160)
+    occurred_at: datetime
+    phase: MissionFailurePhase
+    category: MissionFailureCategory
+    severity: MissionFailureSeverity
+    error_code: str = Field(min_length=1, max_length=160)
+    safe_message: str = Field(min_length=1, max_length=2000)
+    retryable: bool
+    recoverable: bool
+    recommended_action: MissionRecoveryAction
+    task_attempt: int = Field(default=0, ge=0)
+    mission_recovery_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def normalize_public_failure(self) -> "MissionFailureClassification":
+        self.failure_id = self.failure_id.strip()
+        self.mission_id = self.mission_id.strip()
+        self.error_code = self.error_code.strip()
+        self.safe_message = self.safe_message.strip()
+        self.task_id = (self.task_id or "").strip() or None
+        self.source_receipt_id = (self.source_receipt_id or "").strip() or None
+        if not self.failure_id or not self.mission_id or not self.error_code or not self.safe_message:
+            raise ValueError("failure identifiers, code, and safe_message must be non-empty")
+        unsafe = self.safe_message.casefold()
+        secret_assignment = re.search(
+            r"(?i)\b(?:token|password|api[_-]?key|authorization|cookie|credential|"
+            r"private[_-]?key|session[_-]?token)\b\s*[:=]\s*[^\s,;]+",
+            self.safe_message,
+        )
+        if (
+            "traceback (most recent call last)" in unsafe
+            or secret_assignment
+            or re.search(r"(?i)(?:[a-z]:\\|/(?:home|users|root|tmp)/)", self.safe_message)
+        ):
+            raise ValueError("safe_message contains unsafe diagnostic data")
+        return self
+
+
 class SupervisorCommand(BaseModel):
     id: str
     goal: str
@@ -223,6 +286,21 @@ class SupervisorCommand(BaseModel):
 
     control_version: int = 0
     resume_count: int = 0
+
+    latest_failure: MissionFailureClassification | None = None
+    recovery_status: MissionRecoveryStatus = "idle"
+    recovery_attempts_for_failure: int = Field(default=0, ge=0)
+    recovery_count: int = Field(default=0, ge=0)
+    recovery_checkpoint_id: str | None = None
+    recovery_task_id: str | None = None
+    recovery_started_at: datetime | None = None
+    recovery_completed_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def normalize_recovery_ids(self) -> "SupervisorCommand":
+        self.recovery_checkpoint_id = (self.recovery_checkpoint_id or "").strip() or None
+        self.recovery_task_id = (self.recovery_task_id or "").strip() or None
+        return self
 
 
 class SupervisorCreateRequest(BaseModel):
@@ -608,5 +686,47 @@ class MissionControlResponse(BaseModel):
     active_checkpoint_id: str | None = None
     control_version: int
     resume_count: int
+    message: str
+
+
+class MissionRecoveryStatusResponse(BaseModel):
+    mission_id: str
+    command_status: str
+    recovery_status: MissionRecoveryStatus
+    latest_failure: MissionFailureClassification | None = None
+    recovery_attempts_for_failure: int = Field(ge=0)
+    recovery_count: int = Field(ge=0)
+    recovery_checkpoint_id: str | None = None
+    recovery_task_id: str | None = None
+    recovery_started_at: datetime | None = None
+    recovery_completed_at: datetime | None = None
+    control_version: int = Field(ge=0)
+    can_recover: bool
+    blocked_reason: str | None = None
+
+
+class RecoverMissionRequest(BaseModel):
+    failure_id: str | None = Field(default=None, max_length=160)
+    expected_control_version: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def normalize_failure_id(self) -> "RecoverMissionRequest":
+        self.failure_id = (self.failure_id or "").strip() or None
+        return self
+
+
+class RecoverMissionResponse(BaseModel):
+    mission_id: str
+    failure_id: str
+    task_id: str
+    accepted: bool
+    scheduled: bool
+    idempotent: bool
+    command_status: str
+    recovery_status: MissionRecoveryStatus
+    recovery_attempts_for_failure: int = Field(ge=0)
+    recovery_count: int = Field(ge=0)
+    recovery_checkpoint_id: str | None = None
+    control_version: int = Field(ge=0)
     message: str
 
