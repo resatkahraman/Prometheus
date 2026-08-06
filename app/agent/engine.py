@@ -33,6 +33,7 @@ from app.core.schemas import (
     RouteScore,
 )
 from app.memory.project import ProjectMemoryStore
+from app.memory.project_dna import ProjectDNAError, ProjectDNAManager
 from app.orchestration.orchestrator import Orchestrator
 from app.tools.base import ToolApprovalRequired, ToolError
 from app.tools.fingerprint import tool_fingerprint
@@ -128,11 +129,23 @@ class AgentEngine:
         orchestrator: Orchestrator,
         tools: ToolRegistry,
         agents: AgentRegistry | None = None,
+        project_dna: ProjectDNAManager | None = None,
     ) -> None:
         self.settings = settings
         self.orchestrator = orchestrator
         self.tools = tools
         self.agents = agents or build_default_agent_registry(tools.names())
+        self.project_dna = (
+            project_dna
+            if project_dna is not None
+            else ProjectDNAManager(
+                workspace_root=settings.workspace_root,
+                enabled=settings.project_dna_enabled,
+                max_file_bytes=settings.project_dna_max_file_bytes,
+                max_context_chars=settings.project_dna_context_max_chars,
+                max_search_results=settings.workspace_max_search_results,
+            )
+        )
         self._sessions: dict[str, AgentSession] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._approval_flow_locks: dict[
@@ -899,6 +912,14 @@ Kullanılabilir araçlar:
             },
         }
         failures: list[str] = []
+
+        try:
+            dna_context = self.project_dna.context(".")
+        except ProjectDNAError:
+            failures.append("project_dna: invalid or unavailable")
+        else:
+            if dna_context is not None:
+                context["project_dna"] = dna_context.to_prompt_payload()
 
         try:
             self.agents.authorize(

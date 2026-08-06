@@ -157,6 +157,17 @@ class Settings(BaseSettings):
         le=20_000,
     )
     project_memory_hypotheses_enabled: bool = True
+    project_dna_enabled: bool = True
+    project_dna_max_file_bytes: int = Field(
+        default=32_768,
+        ge=4_096,
+        le=131_072,
+    )
+    project_dna_context_max_chars: int = Field(
+        default=8_000,
+        ge=1_000,
+        le=32_000,
+    )
     context_compiler_mode: Literal["off", "shadow", "active"] = "active"
     context_compiler_shadow_budget_chars: int = Field(
         default=8_000,

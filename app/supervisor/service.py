@@ -41,6 +41,7 @@ from app.tools.base import ToolError
 from app.memory.attention import AttentionBroker
 from app.memory.context_compiler import ContextCompiler, ContextSegment
 from app.memory.project import FileMemory, ProjectMemoryStore
+from app.memory.project_dna import ProjectDNAError, ProjectDNAManager
 from app.improvement.service import ImprovementService
 from app.improvement.forge import PrometheusForge
 from app.planning.integrity import validate_planning_document
@@ -164,6 +165,7 @@ class SupervisorService:
         event_journal: MissionEventJournal | None = None,
         execution_receipt_store: ExecutionReceiptStore | None = None,
         mission_checkpoint_store: MissionCheckpointStore | None = None,
+        project_dna: ProjectDNAManager | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = WorkspacePolicy(
@@ -177,6 +179,17 @@ class SupervisorService:
         self._event_journal = event_journal
         self._execution_receipt_store = execution_receipt_store
         self._mission_checkpoint_store = mission_checkpoint_store
+        self.project_dna = (
+            project_dna
+            if project_dna is not None
+            else ProjectDNAManager(
+                workspace_root=settings.workspace_root,
+                enabled=settings.project_dna_enabled,
+                max_file_bytes=settings.project_dna_max_file_bytes,
+                max_context_chars=settings.project_dna_context_max_chars,
+                max_search_results=settings.workspace_max_search_results,
+            )
+        )
         database_path = None
         if settings.supervisor_persistence_enabled:
             database_path = settings.supervisor_database_path
@@ -1786,6 +1799,13 @@ class SupervisorService:
         else:
             command.status = "ready"
 
+    def _project_dna_prompt_text(self) -> str:
+        try:
+            context = self.project_dna.context(".")
+        except ProjectDNAError:
+            return ""
+        return context.text if context is not None else ""
+
     def _planner_prompt(
         self,
         goal: str,
@@ -1812,10 +1832,17 @@ Kullanıcı Onayı ve Kesin Dosyalar.
 Markdown tablosu kullanma.
 """
 
+        project_dna = self._project_dna_prompt_text()
+        project_dna_block = (
+            "\n\nAuthoritative Project DNA:\n" + project_dna
+            if project_dna else ""
+        )
+
         return f"""Ana hedef:
 {goal}
 {decisions}
 {failure_guidance}
+{project_dna_block}
 
 Projeyi gerçek workspace içeriğine göre incele ve yürütülebilir görev
 grafiğine dönüştür.
@@ -4447,7 +4474,14 @@ grafiğine dönüştür.
             baseline_context=context,
             include_hypotheses=creative_context,
         )
-        return compiled_context or context
+        context_result = compiled_context or context
+        project_dna = self._project_dna_prompt_text()
+        if project_dna:
+            return self._focused_context_clip(
+                project_dna + "\n\n" + context_result,
+                self.settings.supervisor_focused_context_max_chars,
+            )
+        return context_result
 
     async def _run_focused_agent_step(
         self,

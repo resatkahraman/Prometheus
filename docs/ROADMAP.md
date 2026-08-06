@@ -11,8 +11,8 @@
 - [x] TASK-043: Mission Recovery and Error Classification
 - [x] TASK-044: Mission History and Post-Run Summary
 - [x] TASK-045: Session Branching
-- [ ] TASK-046: Project DNA — next
-- [ ] TASK-047: Decision Memory
+- [x] TASK-046: Project DNA
+- [ ] TASK-047: Decision Memory — next
 - [ ] TASK-048: Skill Manifest
 - [-] TASK-049: Pandora Offline Queue — Deferred
 

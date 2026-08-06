@@ -72,6 +72,8 @@ from app.core.schemas import (
     WorkspaceProjectsResponse,
     WorkspaceProjectSelectRequest,
     WorkspaceProjectSelectResponse,
+    ProjectDNAResponse,
+    ProjectDNAUpdateRequest,
     ProjectRunHistoryResponse,
     ProjectRunRetryRequest,
     ProjectRunRetryResponse,
@@ -184,6 +186,13 @@ from app.supervisor.service import SupervisorService
 from app.tools.base import ToolError
 from app.tools.registry import build_default_tool_registry
 from app.workspace.policy import WorkspacePolicy
+from app.memory.project_dna import (
+    ProjectDNAConflictError,
+    ProjectDNAError,
+    ProjectDNAIntegrityError,
+    ProjectDNAManager,
+    ProjectDNAValidationError,
+)
 from app.branding import BRAND_NAME, BRAND_STAGE, BRAND_VERSION
 
 
@@ -222,17 +231,26 @@ async def lifespan(app: FastAPI):
         approvals=approvals,
     )
     agents = build_default_agent_registry(tools.names())
+    project_dna = ProjectDNAManager(
+        workspace_root=settings.workspace_root,
+        enabled=settings.project_dna_enabled,
+        max_file_bytes=settings.project_dna_max_file_bytes,
+        max_context_chars=settings.project_dna_context_max_chars,
+        max_search_results=settings.workspace_max_search_results,
+    )
     agent = AgentEngine(
         settings=settings,
         orchestrator=orchestrator,
         tools=tools,
         agents=agents,
+        project_dna=project_dna,
     )
     supervisor = SupervisorService(
         settings=settings,
         agent=agent,
         agents=agents,
         tools=tools,
+        project_dna=project_dna,
     )
 
     app.state.settings = settings
@@ -245,6 +263,7 @@ async def lifespan(app: FastAPI):
     app.state.tools = tools
     app.state.agents = agents
     app.state.agent = agent
+    app.state.project_dna = project_dna
     app.state.supervisor = supervisor
     app.state.workspace_projects = WorkspaceProjectManager(settings.workspace_root)
     app.state.improvement = supervisor.improvement
@@ -1669,6 +1688,52 @@ async def select_workspace_project(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/workspace/project-dna",
+    response_model=ProjectDNAResponse,
+    tags=["workspace"],
+)
+async def read_workspace_project_dna(
+    response: Response,
+    workspace_path: str = ".",
+) -> ProjectDNAResponse:
+    manager: ProjectDNAManager = app.state.project_dna
+    try:
+        result = manager.read(workspace_path)
+    except ProjectDNAValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ProjectDNAIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProjectDNAError as exc:
+        raise HTTPException(status_code=503, detail="Project DNA is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.put(
+    "/v1/workspace/project-dna",
+    response_model=ProjectDNAResponse,
+    tags=["workspace"],
+)
+async def update_workspace_project_dna(
+    payload: ProjectDNAUpdateRequest,
+    response: Response,
+) -> ProjectDNAResponse:
+    manager: ProjectDNAManager = app.state.project_dna
+    try:
+        result = manager.update(payload)
+    except ProjectDNAValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ProjectDNAConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProjectDNAIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProjectDNAError as exc:
+        raise HTTPException(status_code=503, detail="Project DNA is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @app.get(

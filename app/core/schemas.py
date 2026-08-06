@@ -535,6 +535,44 @@ class WorkspaceProjectSelectResponse(BaseModel):
     selected: bool = True
 
 
+class ProjectDNAContent(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    purpose: str = Field(min_length=1, max_length=4_000)
+    technologies: list[str] = Field(default_factory=list, max_length=64)
+    architecture: list[str] = Field(default_factory=list, max_length=64)
+    invariants: list[str] = Field(default_factory=list, max_length=128)
+    conventions: list[str] = Field(default_factory=list, max_length=128)
+    key_paths: list[str] = Field(default_factory=list, max_length=128)
+    build_commands: list[str] = Field(default_factory=list, max_length=32)
+    test_commands: list[str] = Field(default_factory=list, max_length=32)
+    verification_rules: list[str] = Field(default_factory=list, max_length=128)
+    protected_paths: list[str] = Field(default_factory=list, max_length=128)
+
+
+class ProjectDNAUpdateRequest(BaseModel):
+    workspace_path: str = Field(default=".", min_length=1, max_length=1_000)
+    expected_revision: int = Field(default=0, ge=0)
+    expected_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    content: ProjectDNAContent
+
+
+class ProjectDNAResponse(BaseModel):
+    workspace_path: str
+    source_file: str = "PROJECT_DNA.json"
+    state: Literal["missing", "present"]
+    project_id: str | None = None
+    revision: int = Field(default=0, ge=0)
+    digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    updated_at: str | None = None
+    content: ProjectDNAContent | None = None
+    context_chars: int = Field(default=0, ge=0)
+    created: bool = False
+    updated: bool = False
+    replayed: bool = False
+    side_effect_free: bool
+
+
 class ProjectRunHistoryTaskSummary(BaseModel):
     task_id: str
     title: str
