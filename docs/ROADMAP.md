@@ -13,11 +13,12 @@
 - [x] TASK-045: Session Branching
 - [x] TASK-046: Project DNA
 - [x] TASK-047: Decision Memory
-- [ ] TASK-048: Skill Manifest — next
+- [x] TASK-048: Skill Manifest and Capability Policy
 - [-] TASK-049: Pandora Offline Queue — Deferred
 
 ## Phase 2: Context and Safe Patching
-- [ ] TASK-050–058: Context bounds, isolated verification, and safe patching
+- [ ] TASK-050: Project Workspace — next
+- [ ] TASK-051–058: Context bounds, provider abstractions, repository mapping and safe patching
 
 ## Phase 3: Supervised Self-Development
 - [ ] TASK-059–066: Supervised self-development and autonomous evolution

@@ -16,6 +16,16 @@ from app.workspace.policy import WorkspacePolicy
 
 TERMINAL_RUNTIME_REVISION = "terminal-env-v8-pytest-isolated"
 
+SAFE_TERMINAL_PRESETS: tuple[str, ...] = (
+    "python_compile", "file_exists", "node_test", "node_check", "pytest",
+    "npm_install", "npm_install_dev", "npm_test", "npm_build",
+    "install_node_lts", "flutter_analyze", "flutter_test", "pip_install_dev",
+    "gradle_test",
+)
+NETWORK_INTENT_TERMINAL_PRESETS: frozenset[str] = frozenset({
+    "npm_install", "npm_install_dev", "install_node_lts", "pip_install_dev",
+})
+
 
 class SafeTerminalTool(BaseTool):
     name = "safe_terminal"

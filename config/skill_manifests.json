@@ -1,0 +1,638 @@
+{
+  "schema_version": 1,
+  "skills": [
+    {
+      "schema_version": 1,
+      "id": "worker",
+      "name": "General Worker",
+      "version": "1.0.0",
+      "description": "Genel proje geliştirme workerı.",
+      "entrypoint": "agent:worker",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "workspace_write",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": [
+            "**"
+          ]
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_install",
+            "npm_install_dev",
+            "npm_test",
+            "npm_build",
+            "install_node_lts",
+            "flutter_analyze",
+            "flutter_test",
+            "pip_install_dev",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "approval_required"
+        }
+      },
+      "limits": {
+        "max_steps": 12,
+        "max_model_calls": 16,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "filesystem.write",
+          "shell.execute",
+          "network"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "planner",
+      "name": "Product Planner",
+      "version": "1.0.0",
+      "description": "Kanıtlı, atanabilir ve bağımlılıkları doğrulanabilir görev grafiği oluşturan salt okunur planlayıcı.",
+      "entrypoint": "agent:planner",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": []
+        },
+        "shell": {
+          "presets": []
+        },
+        "network": {
+          "mode": "none"
+        }
+      },
+      "limits": {
+        "max_steps": 12,
+        "max_model_calls": 12,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": []
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "architect",
+      "name": "Software Architect",
+      "version": "1.0.0",
+      "description": "Mevcut sistemi, riskleri, modül sınırlarını ve hedef mimariyi inceleyen salt okunur uzman.",
+      "entrypoint": "agent:architect",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": []
+        },
+        "shell": {
+          "presets": []
+        },
+        "network": {
+          "mode": "none"
+        }
+      },
+      "limits": {
+        "max_steps": 12,
+        "max_model_calls": 12,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": []
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "frontend",
+      "name": "Frontend Engineer",
+      "version": "1.0.0",
+      "description": "Web/Flutter arayüz ve istemci entegrasyonu uzmanı.",
+      "entrypoint": "agent:frontend",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "workspace_write",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": [
+            "frontend/**",
+            "web/**",
+            "client/**",
+            "lib/**",
+            "src/components/**",
+            "src/pages/**",
+            "src/screens/**",
+            "src/styles/**",
+            "src/assets/**",
+            "test/**",
+            "tests/**",
+            "integration_test/**",
+            "package.json",
+            "pubspec.yaml"
+          ]
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_install",
+            "npm_install_dev",
+            "npm_test",
+            "npm_build",
+            "install_node_lts",
+            "flutter_analyze",
+            "flutter_test",
+            "pip_install_dev",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "approval_required"
+        }
+      },
+      "limits": {
+        "max_steps": 14,
+        "max_model_calls": 16,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "filesystem.write",
+          "shell.execute",
+          "network"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "backend",
+      "name": "Backend Engineer",
+      "version": "1.0.0",
+      "description": "API, servis ve iş mantığı uzmanı.",
+      "entrypoint": "agent:backend",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "workspace_write",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": [
+            "backend/**",
+            "server/**",
+            "api/**",
+            "app/**",
+            "src/**",
+            "tests/**",
+            "test/**",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "pyproject.toml",
+            "package.json",
+            "Cargo.toml"
+          ]
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_install",
+            "npm_install_dev",
+            "npm_test",
+            "npm_build",
+            "install_node_lts",
+            "flutter_analyze",
+            "flutter_test",
+            "pip_install_dev",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "approval_required"
+        }
+      },
+      "limits": {
+        "max_steps": 15,
+        "max_model_calls": 17,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "filesystem.write",
+          "shell.execute",
+          "network"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "database",
+      "name": "Database Engineer",
+      "version": "1.0.0",
+      "description": "Şema, model, migration ve veri bütünlüğü uzmanı.",
+      "entrypoint": "agent:database",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "workspace_write",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": [
+            "database/**",
+            "db/**",
+            "migrations/**",
+            "prisma/**",
+            "alembic/**",
+            "app/models/**",
+            "app/db/**",
+            "backend/models/**",
+            "backend/db/**",
+            "tests/**",
+            "test/**",
+            "*.sql",
+            "schema.*"
+          ]
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_install",
+            "npm_install_dev",
+            "npm_test",
+            "npm_build",
+            "install_node_lts",
+            "flutter_analyze",
+            "flutter_test",
+            "pip_install_dev",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "approval_required"
+        }
+      },
+      "limits": {
+        "max_steps": 13,
+        "max_model_calls": 15,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "filesystem.write",
+          "shell.execute",
+          "network"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "qa",
+      "name": "QA and Test Engineer",
+      "version": "1.0.0",
+      "description": "Test senaryosu, regresyon ve hata kanıtı uzmanı.",
+      "entrypoint": "agent:qa",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "workspace_write",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": [
+            "tests/**",
+            "test/**",
+            "integration_test/**",
+            "e2e/**",
+            "spec/**",
+            "__tests__/**",
+            "pytest.ini",
+            "vitest.config.*",
+            "jest.config.*"
+          ]
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_install",
+            "npm_install_dev",
+            "npm_test",
+            "npm_build",
+            "install_node_lts",
+            "flutter_analyze",
+            "flutter_test",
+            "pip_install_dev",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "approval_required"
+        }
+      },
+      "limits": {
+        "max_steps": 14,
+        "max_model_calls": 16,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "filesystem.write",
+          "shell.execute",
+          "network"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "reviewer",
+      "name": "Independent Reviewer",
+      "version": "1.0.0",
+      "description": "Diff, gereksinim ve testleri bağımsız denetleyen salt okunur reviewer.",
+      "entrypoint": "agent:reviewer",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": []
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_test",
+            "npm_build",
+            "flutter_analyze",
+            "flutter_test",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "none"
+        }
+      },
+      "limits": {
+        "max_steps": 13,
+        "max_model_calls": 14,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "shell.execute"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "integration",
+      "name": "Integration Engineer",
+      "version": "1.0.0",
+      "description": "Bileşenleri birleştirip build/test bütünlüğünü sağlayan worker.",
+      "entrypoint": "agent:integration",
+      "capabilities": {
+        "tools": [
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search",
+          "git_status",
+          "git_diff",
+          "calculator",
+          "current_datetime",
+          "text_stats",
+          "symbolic_math",
+          "workspace_write",
+          "safe_terminal"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": [
+            "**"
+          ]
+        },
+        "shell": {
+          "presets": [
+            "python_compile",
+            "file_exists",
+            "node_test",
+            "node_check",
+            "pytest",
+            "npm_install",
+            "npm_install_dev",
+            "npm_test",
+            "npm_build",
+            "install_node_lts",
+            "flutter_analyze",
+            "flutter_test",
+            "pip_install_dev",
+            "gradle_test"
+          ]
+        },
+        "network": {
+          "mode": "approval_required"
+        }
+      },
+      "limits": {
+        "max_steps": 16,
+        "max_model_calls": 18,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": [
+          "filesystem.write",
+          "shell.execute",
+          "network"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "calculation",
+      "name": "Engineering Calculation Specialist",
+      "version": "1.0.0",
+      "description": "Mühendislik hesabını deterministik araçlarla yapan salt okunur uzman.",
+      "entrypoint": "agent:calculation",
+      "capabilities": {
+        "tools": [
+          "calculator",
+          "symbolic_math",
+          "text_stats",
+          "current_datetime",
+          "project_summary",
+          "workspace_list",
+          "workspace_read",
+          "workspace_search"
+        ],
+        "filesystem": {
+          "read": [
+            "**"
+          ],
+          "write": []
+        },
+        "shell": {
+          "presets": []
+        },
+        "network": {
+          "mode": "none"
+        }
+      },
+      "limits": {
+        "max_steps": 8,
+        "max_model_calls": 8,
+        "max_output_tokens": 16384,
+        "max_wall_time_seconds": 1800,
+        "max_output_bytes": 1000000
+      },
+      "approval": {
+        "required_for": []
+      }
+    }
+  ]
+}

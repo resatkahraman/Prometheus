@@ -39,6 +39,8 @@ from app.orchestration.orchestrator import Orchestrator
 from app.tools.base import ToolApprovalRequired, ToolError
 from app.tools.fingerprint import tool_fingerprint
 from app.tools.registry import ToolRegistry
+from app.skills.models import SkillManifest
+from app.skills.registry import SkillManifestRegistry, build_default_skill_registry
 
 
 @dataclass(frozen=True)
@@ -76,6 +78,7 @@ class AgentSession:
     base_message_count: int = 0
     context_expansions: int = 0
     evidence_retries: int = 0
+    skill_manifest: SkillManifest | None = None
 
 
 def _generated_source_contract_issue(
@@ -132,6 +135,7 @@ class AgentEngine:
         agents: AgentRegistry | None = None,
         project_dna: ProjectDNAManager | None = None,
         decision_memory: DecisionMemoryManager | None = None,
+        skills: SkillManifestRegistry | None = None,
     ) -> None:
         self.settings = settings
         self.orchestrator = orchestrator
@@ -161,6 +165,7 @@ class AgentEngine:
                 max_search_results=settings.workspace_max_search_results,
             )
         )
+        self.skills = skills if skills is not None else build_default_skill_registry(settings=settings, agents=self.agents, tools=self.tools)
         self._sessions: dict[str, AgentSession] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._approval_flow_locks: dict[
@@ -713,8 +718,10 @@ Kullanılabilir araçlar:
                 else session.profile.temperature
             ),
             max_output_tokens=(
-                session.request.max_output_tokens
-                or self.settings.agent_step_output_tokens
+                min(
+                    session.request.max_output_tokens or self.settings.agent_step_output_tokens,
+                    session.skill_manifest.limits.max_output_tokens if session.skill_manifest else self.settings.agent_step_output_tokens,
+                )
             ),
             include_candidates=False,
             bypass_cache=True,
@@ -823,6 +830,7 @@ Kullanılabilir araçlar:
         status: str,
         pending: dict[str, Any] | None = None,
     ) -> AgentResponse:
+        self._ensure_skill_output_bound(session, answer)
         return AgentResponse(
             answer=answer,
             agent_id=session.profile.id,
@@ -892,11 +900,30 @@ Kullanılabilir araçlar:
         session: AgentSession,
         suggestion: ToolSuggestion,
     ) -> None:
-        self.agents.authorize(
-            profile=session.profile,
-            tool_name=suggestion.tool,
-            arguments=suggestion.arguments,
+        self._authorize_tool(session=session, tool_name=suggestion.tool, arguments=suggestion.arguments)
+
+    def _authorize_tool(self, *, session: AgentSession, tool_name: str, arguments: dict[str, Any]) -> None:
+        invocation_write_paths = list(dict.fromkeys([
+            *session.request.exclusive_write_paths,
+            *session.request.additional_write_paths,
+        ]))
+        self.skills.authorize(
+            skill_id=session.profile.id,
+            tool_name=tool_name,
+            arguments=arguments,
+            invocation_write_paths=invocation_write_paths,
         )
+        self.agents.authorize(profile=session.profile, tool_name=tool_name, arguments=arguments)
+
+    def _ensure_skill_runtime_active(self, session: AgentSession) -> None:
+        if session.skill_manifest and time.monotonic() - session.created_monotonic > session.skill_manifest.limits.max_wall_time_seconds:
+            raise RuntimeError("Skill runtime limit exceeded.")
+
+    def _ensure_skill_output_bound(self, session: AgentSession, value: Any) -> None:
+        if session.skill_manifest:
+            rendered = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+            if len(rendered.encode("utf-8")) > session.skill_manifest.limits.max_output_bytes:
+                raise RuntimeError("Skill output limit exceeded.")
 
     async def _bootstrap_context(
         self,
@@ -952,8 +979,8 @@ Kullanılabilir araçlar:
                 context["decision_memory"] = decision_context.to_prompt_payload()
 
         try:
-            self.agents.authorize(
-                profile=session.profile,
+            self._authorize_tool(
+                session=session,
                 tool_name="project_summary",
                 arguments={},
             )
@@ -971,8 +998,8 @@ Kullanılabilir araçlar:
                 "depth": 3,
                 "max_entries": 180,
             }
-            self.agents.authorize(
-                profile=session.profile,
+            self._authorize_tool(
+                session=session,
                 tool_name="workspace_list",
                 arguments=list_arguments,
             )
@@ -1050,8 +1077,8 @@ Kullanılabilir araçlar:
                     "start_line": 1,
                     "end_line": self.settings.agent_auto_context_max_lines,
                 }
-                self.agents.authorize(
-                    profile=session.profile,
+                self._authorize_tool(
+                    session=session,
                     tool_name="workspace_read",
                     arguments=arguments,
                 )
@@ -1172,8 +1199,8 @@ Kullanılabilir araçlar:
                 "end_line": self.settings.agent_context_expansion_max_lines,
             }
             try:
-                self.agents.authorize(
-                    profile=session.profile,
+                self._authorize_tool(
+                    session=session,
                     tool_name="workspace_read",
                     arguments=arguments_for_read,
                 )
@@ -1299,6 +1326,7 @@ Kullanılabilir araçlar:
     ) -> AgentResponse | None:
         if session.next_step > session.max_steps:
             return None
+        self._ensure_skill_runtime_active(session)
 
         session.tools_used.append(suggestion.tool)
         try:
@@ -1368,6 +1396,7 @@ Kullanılabilir araçlar:
     async def run(self, request: AgentRequest) -> AgentResponse:
         self._cleanup()
         profile = self.agents.get(request.agent_id)
+        manifest = self.skills.manifest(profile.id)
         if request.exclusive_write_paths and not profile.read_only:
             profile = profile.model_copy(
                 update={
@@ -1412,6 +1441,8 @@ Kullanılabilir araçlar:
                 profile.max_model_calls,
                 self.settings.agent_max_model_calls,
             )
+        max_steps = min(max_steps, manifest.limits.max_steps)
+        max_calls = min(max_calls, manifest.limits.max_model_calls)
 
         normalized_messages = list(request.normalized_messages())
         session = AgentSession(
@@ -1435,6 +1466,7 @@ Kullanılabilir araçlar:
             project_context=None,
             protocol_retries=0,
             base_message_count=len(normalized_messages),
+            skill_manifest=manifest,
         )
 
         await self._bootstrap_context(session)
@@ -1463,6 +1495,7 @@ Kullanılabilir araçlar:
             session.next_step,
             session.max_steps + 1,
         ):
+            self._ensure_skill_runtime_active(session)
             if session.model_calls >= session.max_model_calls:
                 break
 
@@ -1973,8 +2006,8 @@ Kullanılabilir araçlar:
                     }
                     success = True
                 else:
-                    self.agents.authorize(
-                        profile=session.profile,
+                    self._authorize_tool(
+                        session=session,
                         tool_name=action.tool,
                         arguments=action.arguments,
                     )
@@ -1982,6 +2015,7 @@ Kullanılabilir araçlar:
                         action.tool,
                         action.arguments,
                     )
+                    self._ensure_skill_output_bound(session, result)
                     success = True
             except ToolApprovalRequired as exc:
                 session.messages.append(
@@ -2092,7 +2126,14 @@ Kullanılabilir araçlar:
 
             pending = await self.tools.approvals.get(approval_id)
             try:
+                self._ensure_skill_runtime_active(session)
+                self._authorize_tool(
+                    session=session,
+                    tool_name=pending.tool_name,
+                    arguments=pending.arguments,
+                )
                 result = await self.tools.execute_approved(approval_id)
+                self._ensure_skill_output_bound(session, result)
                 success = True
             except (ToolError, ValueError, TypeError) as exc:
                 result = {"error": str(exc)}

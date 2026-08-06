@@ -124,6 +124,7 @@ class HealthResponse(BaseModel):
     agents: list[str]
     workspace_root: str
     paid_models_enabled: bool
+    skills: list[str]
 
 
 class CatalogModel(BaseModel):

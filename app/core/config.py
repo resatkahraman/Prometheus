@@ -189,6 +189,16 @@ class Settings(BaseSettings):
         ge=1,
         le=500,
     )
+    skill_manifest_max_file_bytes: int = Field(
+        default=262_144,
+        ge=4_096,
+        le=2_097_152,
+    )
+    skill_manifest_max_entries: int = Field(
+        default=64,
+        ge=1,
+        le=500,
+    )
     context_compiler_mode: Literal["off", "shadow", "active"] = "active"
     context_compiler_shadow_budget_chars: int = Field(
         default=8_000,

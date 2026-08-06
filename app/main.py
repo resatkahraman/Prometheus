@@ -208,6 +208,13 @@ from app.memory.decision_memory import (
     DecisionMemoryValidationError,
 )
 from app.branding import BRAND_NAME, BRAND_STAGE, BRAND_VERSION
+from app.skills.registry import (
+    SkillManifestError,
+    SkillManifestIntegrityError,
+    SkillManifestNotFoundError,
+    build_default_skill_registry,
+)
+from app.skills.models import SkillCatalogResponse, SkillManifestView
 
 
 class PauseMissionRequest(BaseModel):
@@ -245,6 +252,11 @@ async def lifespan(app: FastAPI):
         approvals=approvals,
     )
     agents = build_default_agent_registry(tools.names())
+    skills = build_default_skill_registry(
+        settings=settings,
+        agents=agents,
+        tools=tools,
+    )
     project_dna = ProjectDNAManager(
         workspace_root=settings.workspace_root,
         enabled=settings.project_dna_enabled,
@@ -268,6 +280,7 @@ async def lifespan(app: FastAPI):
         agents=agents,
         project_dna=project_dna,
         decision_memory=decision_memory,
+        skills=skills,
     )
     supervisor = SupervisorService(
         settings=settings,
@@ -290,6 +303,7 @@ async def lifespan(app: FastAPI):
     app.state.agent = agent
     app.state.project_dna = project_dna
     app.state.decision_memory = decision_memory
+    app.state.skills = skills
     app.state.supervisor = supervisor
     app.state.workspace_projects = WorkspaceProjectManager(settings.workspace_root)
     app.state.improvement = supervisor.improvement
@@ -1452,6 +1466,7 @@ async def health() -> HealthResponse:
         routes=routes,
         tools=app.state.tools.names(),
         agents=app.state.agents.ids(),
+        skills=app.state.skills.ids(),
         workspace_root=str(settings.workspace_root.expanduser().resolve()),
         paid_models_enabled=settings.effective_paid_models_enabled,
     )
@@ -1481,6 +1496,28 @@ async def tools() -> list[ToolInfo]:
 @app.get("/v1/agents", response_model=list[AgentProfile], tags=["agents"])
 async def list_agents() -> list[AgentProfile]:
     return app.state.agents.all()
+
+
+@app.get("/v1/skills", response_model=SkillCatalogResponse, tags=["skills"])
+async def list_skills(response: Response) -> SkillCatalogResponse:
+    try:
+        result = app.state.skills.catalog()
+    except SkillManifestError as exc:
+        raise HTTPException(status_code=503, detail="Skill manifest catalog is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.get("/v1/skills/{skill_id}", response_model=SkillManifestView, tags=["skills"])
+async def read_skill(skill_id: str, response: Response) -> SkillManifestView:
+    try:
+        result = app.state.skills.get(skill_id)
+    except SkillManifestNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Skill manifest not found.") from exc
+    except SkillManifestError as exc:
+        raise HTTPException(status_code=503, detail="Skill manifest catalog is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 @app.get("/v1/agents/{agent_id}", response_model=AgentProfile, tags=["agents"])
 async def read_agent(agent_id: str) -> AgentProfile:
