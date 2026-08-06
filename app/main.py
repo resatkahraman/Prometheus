@@ -95,6 +95,11 @@ from app.supervisor.history import (
     MissionHistoryIntegrityError,
     MissionHistoryLimitError,
 )
+from app.supervisor.branching import (
+    MissionBranchConflictError,
+    MissionBranchIntegrityError,
+    MissionBranchUnsupportedSnapshotError,
+)
 from app.supervisor.models import (
     ExecutionReceipt,
     ExecutionReceiptPage,
@@ -108,6 +113,10 @@ from app.supervisor.models import (
     MissionEventPage,
     MissionHistoryPage,
     MissionPostRunSummary,
+    CreateMissionBranchRequest,
+    ActivateMissionBranchRequest,
+    MissionBranchResponse,
+    MissionLineageResponse,
     MissionStateProjection,
     SupervisorCommand,
     SupervisorCommandSummary,
@@ -1312,6 +1321,8 @@ async def evaluate_improvement_candidate(candidate_id: str) -> dict:
         return await app.state.forge.evaluate(candidate_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1833,6 +1844,68 @@ async def read_supervisor_mission_post_run_summary(
             status_code=409,
             detail="Mission geçmişi desteklenen kayıt sınırını aşıyor.",
         ) from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/branches",
+    response_model=MissionBranchResponse,
+    tags=["supervisor"],
+)
+async def create_supervisor_mission_branch(
+    command_id: str,
+    payload: CreateMissionBranchRequest,
+    response: Response,
+) -> MissionBranchResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await app.state.supervisor.create_mission_branch(command_id, request=payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Mission veya checkpoint bulunamadı.") from exc
+    except MissionBranchUnsupportedSnapshotError as exc:
+        raise HTTPException(status_code=409, detail="Checkpoint session branching için uyumlu değil.") from exc
+    except MissionBranchConflictError as exc:
+        raise HTTPException(status_code=409, detail="Session branch isteği mevcut idempotency kaydıyla çakışıyor.") from exc
+    except (MissionBranchIntegrityError, MissionCheckpointIntegrityError, MissionEventIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail="Session branching bütünlüğü doğrulanamadı.") from exc
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/branch/activate",
+    response_model=MissionControlResponse,
+    tags=["supervisor"],
+)
+async def activate_supervisor_mission_branch(
+    command_id: str,
+    payload: ActivateMissionBranchRequest,
+    response: Response,
+) -> MissionControlResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await app.state.supervisor.activate_mission_branch(command_id, request=payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Mission veya checkpoint bulunamadı.") from exc
+    except (MissionCheckpointIntegrityError, MissionEventIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail="Session branching bütünlüğü doğrulanamadı.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Session branch etkinleştirilemedi.") from exc
+
+
+@app.get(
+    "/v1/supervisor/commands/{command_id}/lineage",
+    response_model=MissionLineageResponse,
+    tags=["supervisor"],
+)
+async def read_supervisor_mission_lineage(
+    command_id: str,
+    response: Response,
+) -> MissionLineageResponse:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await app.state.supervisor.get_mission_lineage(command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Mission bulunamadı.") from exc
+    except MissionBranchIntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Mission lineage bütünlüğü doğrulanamadı.") from exc
     except (
         MissionHistoryIntegrityError,
         MissionEventIntegrityError,
@@ -2099,6 +2172,8 @@ async def delete_supervisor_command(command_id: str) -> dict[str, bool]:
         return {"deleted": await app.state.supervisor.delete(command_id)}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post(

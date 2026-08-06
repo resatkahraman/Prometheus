@@ -57,6 +57,10 @@ _LABELS = {
     "mission_recovery_blocked": "Mission recovery blocked",
     "mission_recovery_failed": "Mission recovery failed",
     "mission_budget_exhausted": "Mission budget exhausted",
+    "mission_branched_from": "Mission branched from checkpoint",
+    "mission_branch_ready": "Mission branch ready",
+    "mission_branch_activation_started": "Mission branch activation started",
+    "mission_branch_activated": "Mission branch activated",
 }
 _RECOVERY_STATUS = {
     "mission_recovery_started": "started",

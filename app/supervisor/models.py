@@ -61,6 +61,8 @@ MissionRecoveryStatus = Literal[
     "idle", "eligible", "scheduled", "running", "recovered", "blocked", "exhausted",
 ]
 
+MissionBranchWorkspaceMode = Literal["shared_current_workspace"]
+
 HandoffType = Literal[
     "task_assignment",
     "completion",
@@ -296,10 +298,47 @@ class SupervisorCommand(BaseModel):
     recovery_started_at: datetime | None = None
     recovery_completed_at: datetime | None = None
 
+    root_mission_id: str | None = None
+    parent_mission_id: str | None = None
+    source_checkpoint_id: str | None = None
+    source_checkpoint_sequence: int | None = Field(default=None, ge=1)
+    source_checkpoint_hash: str | None = None
+    source_checkpoint_state_hash: str | None = None
+    branch_depth: int = Field(default=0, ge=0, le=64)
+    branch_label: str | None = Field(default=None, max_length=160)
+    branch_idempotency_key_hash: str | None = None
+    branch_request_fingerprint: str | None = None
+    branched_at: datetime | None = None
+    branch_activation_required: bool = False
+    branch_activated_at: datetime | None = None
+    branch_workspace_mode: MissionBranchWorkspaceMode | None = None
+
     @model_validator(mode="after")
     def normalize_recovery_ids(self) -> "SupervisorCommand":
         self.recovery_checkpoint_id = (self.recovery_checkpoint_id or "").strip() or None
         self.recovery_task_id = (self.recovery_task_id or "").strip() or None
+        for name in ("root_mission_id", "parent_mission_id", "source_checkpoint_id", "source_checkpoint_hash", "source_checkpoint_state_hash", "branch_idempotency_key_hash", "branch_request_fingerprint"):
+            value = (getattr(self, name) or "").strip() or None
+            setattr(self, name, value)
+        self.branch_label = (self.branch_label or "").strip()[:160] or None
+        if self.parent_mission_id is None:
+            if self.branch_depth != 0 or self.branch_activation_required:
+                raise ValueError("root Mission cannot require branch activation or depth")
+        else:
+            if self.parent_mission_id == self.id:
+                raise ValueError("branch cannot reference itself")
+            required = (self.root_mission_id, self.source_checkpoint_id, self.source_checkpoint_hash, self.source_checkpoint_state_hash, self.branch_idempotency_key_hash, self.branch_request_fingerprint, self.branched_at, self.branch_workspace_mode)
+            if any(item is None for item in required) or self.branch_depth < 1:
+                raise ValueError("child branch lineage is incomplete")
+        sha_fields = ("source_checkpoint_hash", "source_checkpoint_state_hash", "branch_idempotency_key_hash", "branch_request_fingerprint")
+        for name in sha_fields:
+            value = getattr(self, name)
+            if value is not None and not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
+                raise ValueError(f"{name} must be sha256:<64 lowercase hex>")
+        if self.branch_label and (re.search(r"(?i)\b(?:token|password|api[_-]?key|authorization|cookie|credential|private[_-]?key|session[_-]?token)\b\s*[:=]", self.branch_label) or re.search(r"(?i)(?:[a-z]:\\|/(?:home|users|root|tmp)/)", self.branch_label) or "traceback (most recent call last)" in self.branch_label.casefold()):
+            raise ValueError("branch_label contains unsafe diagnostic data")
+        if self.branch_activated_at is not None and self.branch_activation_required:
+            raise ValueError("activated branch cannot still require activation")
         return self
 
 
@@ -603,6 +642,7 @@ class MissionCheckpointRecord(BaseModel):
         "post_execution",
         "approval_boundary",
         "system",
+        "branch_origin",
     ]
 
     status_at_checkpoint: str
@@ -897,4 +937,79 @@ class MissionPostRunSummary(BaseModel):
         if any(len(item) > 500 for item in self.warnings):
             raise ValueError("warning exceeds 500 characters")
         return self
+
+
+class CreateMissionBranchRequest(BaseModel):
+    checkpoint_id: str = Field(min_length=1, max_length=160)
+    expected_checkpoint_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    label: str | None = Field(default=None, max_length=160)
+
+    @model_validator(mode="after")
+    def normalize_branch_request(self) -> "CreateMissionBranchRequest":
+        self.checkpoint_id = self.checkpoint_id.strip()
+        self.idempotency_key = self.idempotency_key.strip()
+        self.label = (self.label or "").strip()[:160] or None
+        if self.label and (re.search(r"(?i)\b(?:token|password|api[_-]?key|authorization|cookie|credential|private[_-]?key|session[_-]?token)\b\s*[:=]", self.label) or re.search(r"(?i)(?:[a-z]:\\|/(?:home|users|root|tmp)/)", self.label) or "traceback (most recent call last)" in self.label.casefold()):
+            raise ValueError("label contains unsafe diagnostic data")
+        return self
+
+
+class ActivateMissionBranchRequest(BaseModel):
+    expected_control_version: int | None = Field(default=None, ge=0)
+    expected_source_checkpoint_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    confirm_shared_workspace: bool
+
+    @model_validator(mode="after")
+    def require_workspace_confirmation(self) -> "ActivateMissionBranchRequest":
+        if self.confirm_shared_workspace is not True:
+            raise ValueError("confirm_shared_workspace must be true")
+        return self
+
+
+class MissionBranchResponse(BaseModel):
+    parent_mission_id: str
+    child_mission_id: str
+    root_mission_id: str
+    source_checkpoint_id: str
+    source_checkpoint_sequence: int = Field(ge=1)
+    source_checkpoint_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    source_checkpoint_state_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    branch_depth: int = Field(ge=1, le=64)
+    branch_label: str | None = None
+    branch_workspace_mode: MissionBranchWorkspaceMode
+    child_status: str
+    child_active_checkpoint_id: str
+    child_control_version: int = Field(ge=0)
+    created: bool
+    execution_started: bool = False
+    activation_required: bool = True
+
+
+class MissionBranchSummary(BaseModel):
+    mission_id: str
+    status: str
+    branch_depth: int = Field(ge=1, le=64)
+    source_checkpoint_id: str
+    source_checkpoint_sequence: int = Field(ge=1)
+    source_checkpoint_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    branch_label: str | None = None
+    created_at: str
+    activation_required: bool
+    activated_at: datetime | None = None
+
+
+class MissionLineageResponse(BaseModel):
+    mission_id: str
+    root_mission_id: str
+    parent_mission_id: str | None
+    branch_depth: int = Field(ge=0, le=64)
+    source_checkpoint_id: str | None = None
+    source_checkpoint_sequence: int | None = Field(default=None, ge=1)
+    source_checkpoint_hash: str | None = None
+    source_checkpoint_state_hash: str | None = None
+    ancestor_mission_ids: list[str] = Field(default_factory=list)
+    direct_children: list[MissionBranchSummary] = Field(default_factory=list)
+    direct_child_count: int = Field(ge=0)
+    lineage_complete: bool
 

@@ -91,6 +91,18 @@ from app.supervisor.history import (
     build_mission_history_page,
     build_mission_post_run_summary,
 )
+from app.supervisor.branching import (
+    MissionBranchConflictError,
+    MissionBranchIntegrityError,
+    MissionBranchUnsupportedSnapshotError,
+    build_branch_checkpoint_snapshot,
+    build_child_branch_command,
+    build_mission_lineage,
+    checkpoint_snapshot_version,
+    compute_branch_idempotency_key_hash,
+    compute_branch_request_fingerprint,
+    validate_branch_source,
+)
 from app.supervisor.models import (
     ExecutionReceipt,
     ExecutionReceiptIntegrity,
@@ -107,6 +119,10 @@ from app.supervisor.models import (
     MissionFailureClassification,
     MissionHistoryPage,
     MissionPostRunSummary,
+    CreateMissionBranchRequest,
+    ActivateMissionBranchRequest,
+    MissionBranchResponse,
+    MissionLineageResponse,
     MissionRecoveryStatusResponse,
     RecoverMissionResponse,
     SupervisorApprovalRecord,
@@ -251,49 +267,7 @@ class SupervisorService:
         self,
         command: SupervisorCommand,
     ) -> dict[str, Any]:
-        active_task = next((t for t in command.tasks if t.status == "running"), None)
-        current_task_id = active_task.id if active_task else None
-
-        tasks_snap = [
-            {
-                "id": t.id,
-                "title": t.title,
-                "status": t.status,
-                "attempts": t.attempts,
-                "assigned_agent": t.assigned_agent,
-                "verification": t.verification,
-                "exact_files": list(t.exact_files) if t.exact_files else [],
-                "continuation_resumes": t.continuation_resumes,
-                "recovery_reason": t.recovery_reason,
-            }
-            for t in command.tasks
-        ]
-
-        decisions_snap = [
-            {
-                "id": d.id,
-                "question": d.question,
-                "status": d.status,
-                "answer": d.answer,
-            }
-            for d in command.decisions
-        ]
-
-        snapshot = {
-            "id": command.id,
-            "goal": command.goal,
-            "status": command.status,
-            "autonomy_mode": command.autonomy_mode,
-            "auto_run": command.auto_run,
-            "plan_text": command.plan_text,
-            "tasks": tasks_snap,
-            "decisions": decisions_snap,
-            "execution_layers": command.execution_layers,
-            "current_task_id": current_task_id,
-            "control_version": command.control_version,
-            "resume_count": command.resume_count,
-        }
-        return snapshot
+        return build_branch_checkpoint_snapshot(command)
 
     async def _create_mission_checkpoint(
         self,
@@ -500,6 +474,25 @@ class SupervisorService:
     ) -> MissionControlResponse:
         async with self._command_lock(command_id):
             command = await self.store.get(command_id)
+            return await self._resume_mission_locked(
+                command,
+                checkpoint_id=checkpoint_id,
+                expected_control_version=expected_control_version,
+                allow_branch_activation=False,
+            )
+
+    async def _resume_mission_locked(
+        self,
+        command: SupervisorCommand,
+        *,
+        checkpoint_id: str | None = None,
+        expected_control_version: int | None = None,
+        allow_branch_activation: bool,
+    ) -> MissionControlResponse:
+        if command:
+            command_id = command.id
+            if command.branch_activation_required and not allow_branch_activation:
+                raise ValueError("Session branch activation is required before resume.")
             if command.status != "paused":
                 raise ValueError(f"Command '{command_id}' paused durumunda değil (mevcut: {command.status}).")
 
@@ -535,7 +528,14 @@ class SupervisorService:
                 raise KeyError(f"Active checkpoint snapshot '{command.active_checkpoint_id}' okunamadı.")
 
             calc_state_hash, _ = compute_state_hash(snapshot)
-            current_snapshot = self._build_resumable_checkpoint_snapshot(command)
+            snapshot_version = checkpoint_snapshot_version(snapshot)
+            if snapshot_version == 2:
+                current_snapshot = build_branch_checkpoint_snapshot(command)
+            elif snapshot_version == 1:
+                from app.supervisor.branching import build_legacy_checkpoint_snapshot
+                current_snapshot = build_legacy_checkpoint_snapshot(command)
+            else:
+                raise ValueError("Checkpoint snapshot format is invalid.")
             current_state_hash, _ = compute_state_hash(current_snapshot)
 
             if current_state_hash != calc_state_hash or current_state_hash != checkpoint.state_hash:
@@ -2282,6 +2282,134 @@ grafiğine dönüştür.
             if not command.archived
         ]
 
+    @staticmethod
+    def _branch_response(child: SupervisorCommand, *, parent_id: str, created: bool) -> MissionBranchResponse:
+        return MissionBranchResponse(
+            parent_mission_id=parent_id,
+            child_mission_id=child.id,
+            root_mission_id=child.root_mission_id or parent_id,
+            source_checkpoint_id=child.source_checkpoint_id or "unknown",
+            source_checkpoint_sequence=child.source_checkpoint_sequence or 1,
+            source_checkpoint_hash=child.source_checkpoint_hash or "sha256:" + "0" * 64,
+            source_checkpoint_state_hash=child.source_checkpoint_state_hash or "sha256:" + "0" * 64,
+            branch_depth=child.branch_depth,
+            branch_label=child.branch_label,
+            branch_workspace_mode=child.branch_workspace_mode or "shared_current_workspace",
+            child_status=child.status,
+            child_active_checkpoint_id=child.active_checkpoint_id or "",
+            child_control_version=child.control_version,
+            created=created,
+            activation_required=child.branch_activation_required,
+        )
+
+    async def create_mission_branch(
+        self,
+        parent_mission_id: str,
+        *,
+        request: CreateMissionBranchRequest,
+    ) -> MissionBranchResponse:
+        async with self._command_lock(parent_mission_id):
+            parent = await self.store.get(parent_mission_id)
+            parent_before = parent.model_dump(mode="json")
+            key_hash = compute_branch_idempotency_key_hash(request.idempotency_key)
+            fingerprint = compute_branch_request_fingerprint(
+                parent_mission_id=parent.id,
+                checkpoint_id=request.checkpoint_id,
+                checkpoint_hash=request.expected_checkpoint_hash,
+                idempotency_key_hash=key_hash,
+                label=request.label,
+            )
+            commands = await self.store.list()
+            for existing in commands:
+                if existing.parent_mission_id != parent.id or existing.branch_idempotency_key_hash != key_hash:
+                    continue
+                if existing.branch_request_fingerprint != fingerprint:
+                    raise MissionBranchConflictError("Session branch request conflicts with existing idempotency record.")
+                return self._branch_response(existing, parent_id=parent.id, created=False)
+            fingerprint_hex = fingerprint.removeprefix("sha256:")
+            if len(fingerprint_hex) != 64 or any(char not in "0123456789abcdef" for char in fingerprint_hex):
+                raise MissionBranchIntegrityError("Branch request fingerprint is invalid.")
+            child_id = "branch-" + fingerprint_hex[:24]
+            if any(item.id == child_id for item in commands):
+                raise MissionBranchConflictError("Deterministic child Mission ID already belongs to another request.")
+            checkpoint_store = self._get_mission_checkpoint_store()
+            if checkpoint_store.has_checkpoints(mission_id=child_id):
+                raise MissionBranchIntegrityError("Partial branch checkpoint evidence already exists.")
+            if self._get_event_journal().has_journal(mission_id=child_id):
+                raise MissionBranchIntegrityError("Partial branch event evidence already exists.")
+            checkpoint = checkpoint_store.get_checkpoint(mission_id=parent.id, checkpoint_id=request.checkpoint_id)
+            if checkpoint is None:
+                raise KeyError("Mission checkpoint not found.")
+            if checkpoint.checkpoint_hash != request.expected_checkpoint_hash:
+                raise MissionBranchIntegrityError("Checkpoint hash mismatch.")
+            snapshot = checkpoint_store.get_checkpoint_snapshot(mission_id=parent.id, checkpoint_id=checkpoint.checkpoint_id)
+            if snapshot is None:
+                raise MissionBranchIntegrityError("Checkpoint snapshot not found.")
+            source = validate_branch_source(parent=parent, checkpoint=checkpoint, snapshot=snapshot)
+            child, target = build_child_branch_command(source_command=source, parent=parent, checkpoint=checkpoint, child_mission_id=child_id, request_fingerprint=fingerprint, idempotency_key_hash=key_hash, label=request.label, now=datetime.now(timezone.utc))
+            if parent.model_dump(mode="json") != parent_before:
+                raise MissionBranchIntegrityError("Parent Mission changed during branch construction.")
+            self._event(child, type="command_created", message="Mission branch created.")
+            self._event(child, type="mission_branched_from", message="Mission branched from a verified checkpoint.", data={"parent_mission_id": parent.id, "root_mission_id": child.root_mission_id, "source_checkpoint_id": checkpoint.checkpoint_id, "source_checkpoint_sequence": checkpoint.sequence, "source_checkpoint_hash": checkpoint.checkpoint_hash, "source_checkpoint_state_hash": checkpoint.state_hash, "branch_depth": child.branch_depth, "branch_request_fingerprint": fingerprint, "workspace_mode": "shared_current_workspace", "activation_required": True})
+            await self.store.put(child)
+            origin = await self._create_mission_checkpoint(child, reason="branch_origin", resumable=True, resume_target_status=target, current_task_id=None)
+            child.active_checkpoint_id = origin.checkpoint_id
+            self._event(child, type="mission_branch_ready", message="Mission branch is ready for explicit activation.", data={"parent_mission_id": parent.id, "source_checkpoint_id": checkpoint.checkpoint_id, "origin_checkpoint_id": origin.checkpoint_id, "resume_target_status": target, "control_version": child.control_version, "activation_required": True, "workspace_mode": "shared_current_workspace"})
+            await self.store.put(child)
+            if parent.model_dump(mode="json") != parent_before:
+                raise MissionBranchIntegrityError("Parent Mission changed during branch creation.")
+            return self._branch_response(child, parent_id=parent.id, created=True)
+
+    async def get_mission_lineage(self, command_id: str) -> MissionLineageResponse:
+        command = await self.store.get(command_id)
+        return build_mission_lineage(command=command, commands=await self.store.list())
+
+    async def activate_mission_branch(
+        self,
+        command_id: str,
+        *,
+        request: ActivateMissionBranchRequest,
+    ) -> MissionControlResponse:
+        async with self._command_lock(command_id):
+            command = await self.store.get(command_id)
+            lineage = build_mission_lineage(command=command, commands=await self.store.list())
+            if not lineage.lineage_complete:
+                raise MissionBranchIntegrityError("Mission branch lineage is incomplete.")
+            if not command.parent_mission_id:
+                raise ValueError("Mission is not a branch.")
+            if not command.branch_activation_required:
+                return MissionControlResponse(mission_id=command.id, command_status=command.status, pause_requested=False, active_checkpoint_id=command.active_checkpoint_id, control_version=command.control_version, resume_count=command.resume_count, message="Branch already activated.")
+            if request.confirm_shared_workspace is not True:
+                raise ValueError("Shared workspace confirmation is required.")
+            if request.expected_source_checkpoint_hash != command.source_checkpoint_hash:
+                raise ValueError("Source checkpoint hash mismatch.")
+            if request.expected_control_version is not None and request.expected_control_version != command.control_version:
+                raise ValueError("Control version mismatch.")
+            if command.status != "paused" or not command.active_checkpoint_id:
+                raise ValueError("Session branch etkinleştirilemedi.")
+            self._event(command, type="mission_branch_activation_started", message="Mission branch activation started.", data={"parent_mission_id": command.parent_mission_id, "source_checkpoint_id": command.source_checkpoint_id, "control_version": command.control_version, "workspace_mode": "shared_current_workspace"})
+            activation_time = datetime.now(timezone.utc)
+            rollback_command = command.model_copy(deep=True)
+            try:
+                result = await self._resume_mission_locked(
+                    command,
+                    checkpoint_id=command.active_checkpoint_id,
+                    expected_control_version=command.control_version,
+                    allow_branch_activation=True,
+                )
+            except Exception:
+                rollback_command.events = command.events
+                command = rollback_command
+                command.branch_activation_required = True
+                command.branch_activated_at = None
+                await self.store.put(command)
+                raise
+            command.branch_activation_required = False
+            command.branch_activated_at = activation_time
+            self._event(command, type="mission_branch_activated", message="Mission branch activated.", data={"parent_mission_id": command.parent_mission_id, "source_checkpoint_id": command.source_checkpoint_id, "control_version": command.control_version, "workspace_mode": "shared_current_workspace"})
+            await self.store.put(command)
+            return result
+
     async def archive(self, command_id: str) -> SupervisorCommand:
         command = await self.store.get(command_id)
         for (job_command_id, operation), job in list(self._background_jobs.items()):
@@ -2300,6 +2428,8 @@ grafiğine dönüştür.
 
     async def delete(self, command_id: str) -> bool:
         await self.store.get(command_id)
+        if any(command.parent_mission_id == command_id for command in await self.store.list()):
+            raise ValueError("Mission with child branches cannot be deleted.")
         for (job_command_id, operation), job in list(self._background_jobs.items()):
             if job_command_id == command_id and not job.done():
                 await self._cancel_with_grace(job)

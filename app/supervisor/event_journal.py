@@ -121,6 +121,10 @@ def canonical_event_kind(event_type: str) -> str:
         "mission_failed",
         "command_cancelled",
         "mission_cancelled",
+        "mission_branched_from",
+        "mission_branch_ready",
+        "mission_branch_activation_started",
+        "mission_branch_activated",
     ):
         return "mission"
 
