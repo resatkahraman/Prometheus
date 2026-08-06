@@ -41,6 +41,9 @@ from app.core.schemas import (
 )
 from app.supervisor.run_snapshots import RunSnapshotManager
 from app.workspace.policy import WorkspacePolicy
+from app.workspace.projects import WorkspaceProjectManager
+from app.workspace.runtime import ProjectWorkspaceRuntimeFactory, ProjectWorkspaceRuntime
+from app.approvals.manager import ApprovalManager
 from app.tools.base import ToolError
 from app.memory.attention import AttentionBroker
 from app.memory.context_compiler import ContextCompiler, ContextSegment
@@ -169,14 +172,16 @@ class SupervisorService:
         self,
         *,
         settings: Settings,
-        agent: AgentEngine,
-        agents: AgentRegistry,
-        tools: ToolRegistry,
+        agent: AgentEngine | None,
+        agents: AgentRegistry | None,
+        tools: ToolRegistry | None,
         event_journal: MissionEventJournal | None = None,
         execution_receipt_store: ExecutionReceiptStore | None = None,
         mission_checkpoint_store: MissionCheckpointStore | None = None,
         project_dna: ProjectDNAManager | None = None,
         decision_memory: DecisionMemoryManager | None = None,
+        workspace_runtime: ProjectWorkspaceRuntimeFactory | None = None,
+        workspace_projects: WorkspaceProjectManager | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = WorkspacePolicy(
@@ -187,6 +192,29 @@ class SupervisorService:
         self.agent = agent
         self.agents = agents
         self.tools = tools
+        self.workspace_projects = (
+            workspace_projects
+            if workspace_projects is not None
+            else WorkspaceProjectManager(
+                settings.workspace_root,
+                max_file_bytes=settings.workspace_max_file_bytes,
+                max_search_results=settings.workspace_max_search_results,
+            )
+        )
+        if workspace_runtime is not None:
+            self.workspace_runtime = workspace_runtime
+        else:
+            if tools is not None:
+                runtime_approvals = tools.approvals
+            else:
+                runtime_approvals = ApprovalManager(
+                    ttl_seconds=settings.approval_ttl_seconds
+                )
+            self.workspace_runtime = ProjectWorkspaceRuntimeFactory(
+                settings=settings,
+                projects=self.workspace_projects,
+                approvals=runtime_approvals,
+            )
         self._event_journal = event_journal
         self._execution_receipt_store = execution_receipt_store
         self._mission_checkpoint_store = mission_checkpoint_store
@@ -247,6 +275,12 @@ class SupervisorService:
         self.forge = PrometheusForge(
             settings=settings,
             improvement=self.improvement,
+        )
+
+    def _planning_kernel_for_workspace(self, runtime: ProjectWorkspaceRuntime) -> TypedPlanningKernel:
+        return TypedPlanningKernel(
+            tools=runtime.tools,
+            read_max_lines=self.settings.supervisor_planner_read_max_lines,
         )
 
     def _get_event_journal(self) -> MissionEventJournal:
@@ -1823,9 +1857,9 @@ class SupervisorService:
         else:
             command.status = "ready"
 
-    def _project_dna_prompt_text(self) -> str:
+    def _project_dna_prompt_text(self, workspace_path: str = ".") -> str:
         try:
-            context = self.project_dna.context(".")
+            context = self.project_dna.context(workspace_path)
         except ProjectDNAError:
             return ""
         return context.text if context is not None else ""
@@ -1833,6 +1867,7 @@ class SupervisorService:
     def _decision_memory_prompt_text(
         self,
         *,
+        workspace_path: str = ".",
         mission_id: str | None = None,
         paths: list[str] | None = None,
     ) -> str:
@@ -1841,7 +1876,7 @@ class SupervisorService:
             return ""
         try:
             context = manager.context(
-                workspace_path=".",
+                workspace_path=workspace_path,
                 mission_id=mission_id,
                 paths=paths,
             )
@@ -2000,7 +2035,9 @@ grafiğine dönüştür.
         )
         await self.store.put(command)
 
-        result = await self.planning_kernel.build(
+        runtime = self.workspace_runtime.resolve(command.workspace_path) if self.workspace_runtime is not None else None
+        planning_kernel = self._planning_kernel_for_workspace(runtime) if runtime is not None else self.planning_kernel
+        result = await planning_kernel.build(
             goal=goal,
             decision_answers=decision_answers,
         )
@@ -2162,6 +2199,7 @@ grafiğine dönüştür.
         background: bool = False,
         autonomy_mode: str | None = None,
         force_new: bool = False,
+        workspace_path: str | None = None,
     ) -> SupervisorCommand:
         resolved_autonomy = (
             autonomy_mode
@@ -2262,6 +2300,7 @@ grafiğine dönüştür.
                     )
                 return existing
 
+        runtime = self.workspace_runtime.resolve(workspace_path) if self.workspace_runtime is not None else None
         command = SupervisorCommand(
             id=secrets.token_urlsafe(12),
             goal=goal,
@@ -2270,6 +2309,8 @@ grafiğine dönüştür.
             auto_run=auto_start,
             plan_text="",
             tasks=[],
+            workspace_path=runtime.workspace_path if runtime else (workspace_path or "."),
+            project_key=runtime.project_key if runtime else None,
         )
         self._event(
             command,
@@ -4866,6 +4907,7 @@ Kurallar:
                         supervised_budget=True,
                         include_trace=True,
                         allow_deterministic_tools=False,
+                        workspace_path=command.workspace_path,
                         additional_write_paths=allowed_paths,
                         exclusive_write_paths=allowed_paths,
                         source_evidence_pending_paths=[
@@ -6872,6 +6914,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             ),
             usage_scope=command_id,
             usage_task_id=task.id,
+            workspace_path=command.workspace_path,
         )
 
         failure_code: str | None = None
@@ -7756,6 +7799,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
                             supervised_budget=True,
                             include_trace=True,
                             allow_deterministic_tools=False,
+                            workspace_path=command.workspace_path,
                             additional_write_paths=task.exact_files,
                             exclusive_write_paths=task.exact_files,
                             applied_tool_fingerprints=(

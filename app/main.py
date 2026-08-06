@@ -72,6 +72,7 @@ from app.core.schemas import (
     WorkspaceProjectsResponse,
     WorkspaceProjectSelectRequest,
     WorkspaceProjectSelectResponse,
+    ProjectWorkspaceActiveResponse,
     ProjectDNAResponse,
     ProjectDNAUpdateRequest,
     DecisionMemoryCreateRequest,
@@ -84,7 +85,8 @@ from app.core.schemas import (
     ProjectRunRetryRequest,
     ProjectRunRetryResponse,
 )
-from app.workspace.projects import WorkspaceProjectManager
+from app.workspace.projects import WorkspaceProjectManager, ProjectWorkspaceError, ProjectWorkspaceConflictError, ProjectWorkspaceIntegrityError, ProjectWorkspaceValidationError, ProjectWorkspaceStorageError
+from app.workspace.runtime import ProjectWorkspaceRuntimeFactory
 from app.orchestration.orchestrator import Orchestrator
 from app.orchestration.routes import RouteCatalog
 from app.providers.registry import ProviderRegistry
@@ -247,6 +249,13 @@ async def lifespan(app: FastAPI):
     approvals = ApprovalManager(
         ttl_seconds=settings.approval_ttl_seconds
     )
+    workspace_projects = WorkspaceProjectManager(
+        settings.workspace_root,
+        state_root=settings.workspace_root / ".adam",
+        max_file_bytes=settings.project_workspace_state_max_file_bytes,
+        max_search_results=settings.workspace_max_search_results,
+    )
+    workspace_runtime = ProjectWorkspaceRuntimeFactory(settings=settings, projects=workspace_projects, approvals=approvals)
     tools = build_default_tool_registry(
         settings=settings,
         approvals=approvals,
@@ -281,6 +290,8 @@ async def lifespan(app: FastAPI):
         project_dna=project_dna,
         decision_memory=decision_memory,
         skills=skills,
+        workspace_projects=workspace_projects,
+        workspace_runtime=workspace_runtime,
     )
     supervisor = SupervisorService(
         settings=settings,
@@ -289,6 +300,8 @@ async def lifespan(app: FastAPI):
         tools=tools,
         project_dna=project_dna,
         decision_memory=decision_memory,
+        workspace_projects=workspace_projects,
+        workspace_runtime=workspace_runtime,
     )
 
     app.state.settings = settings
@@ -305,7 +318,8 @@ async def lifespan(app: FastAPI):
     app.state.decision_memory = decision_memory
     app.state.skills = skills
     app.state.supervisor = supervisor
-    app.state.workspace_projects = WorkspaceProjectManager(settings.workspace_root)
+    app.state.workspace_projects = workspace_projects
+    app.state.workspace_runtime = workspace_runtime
     app.state.improvement = supervisor.improvement
     app.state.forge = supervisor.forge
     app.state.arena_recovery_executor = ArenaRecoveryExecutor(
@@ -1476,12 +1490,15 @@ async def health() -> HealthResponse:
 async def workspace_status() -> WorkspaceStatus:
     settings = app.state.settings
     summary = await app.state.tools.execute("project_summary", {})
+    active = app.state.workspace_projects.read_active()
     return WorkspaceStatus(
         root=str(settings.workspace_root.expanduser().resolve()),
         exists=settings.workspace_root.expanduser().resolve().exists(),
         project_types=summary["project_types"],
         git_repository=summary["git_repository"],
         paid_models_enabled=settings.effective_paid_models_enabled,
+        active_workspace_path=active.binding.workspace_path if active.binding else None,
+        active_project_key=active.binding.project_key if active.binding else None,
     )
 
 
@@ -1639,6 +1656,7 @@ async def create_supervisor_command(
             background=request.background,
             autonomy_mode=request.autonomy_mode,
             force_new=getattr(request, "force_new", False),
+            workspace_path=request.workspace_path,
         )
     except TrustedAutonomyDisabledError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -1728,10 +1746,12 @@ async def revert_supervisor_command_changes(
     response_model=WorkspaceProjectsResponse,
     tags=["workspace"],
 )
-async def list_workspace_projects() -> WorkspaceProjectsResponse:
+async def list_workspace_projects(response: Response) -> WorkspaceProjectsResponse:
     try:
         manager: WorkspaceProjectManager = app.state.workspace_projects
-        return manager.list_projects()
+        result = manager.list_projects()
+        response.headers["Cache-Control"] = "no-store"
+        return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -1742,15 +1762,36 @@ async def list_workspace_projects() -> WorkspaceProjectsResponse:
     tags=["workspace"],
 )
 async def select_workspace_project(
+    response: Response,
     payload: WorkspaceProjectSelectRequest,
 ) -> WorkspaceProjectSelectResponse:
     try:
         manager: WorkspaceProjectManager = app.state.workspace_projects
-        return manager.select_project(payload.workspace_path)
+        result = manager.select_project(payload)
+        response.headers["Cache-Control"] = "no-store"
+        return result
+    except ProjectWorkspaceValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (ProjectWorkspaceConflictError, ProjectWorkspaceIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProjectWorkspaceStorageError as exc:
+        raise HTTPException(status_code=503, detail="Workspace state unavailable.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/v1/workspace/projects/active", response_model=ProjectWorkspaceActiveResponse, tags=["workspace"])
+async def read_active_workspace_project(response: Response) -> ProjectWorkspaceActiveResponse:
+    try:
+        result = app.state.workspace_projects.read_active()
+    except ProjectWorkspaceIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ProjectWorkspaceError as exc:
+        raise HTTPException(status_code=503, detail="Workspace state unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @app.get(
@@ -1974,6 +2015,7 @@ async def list_supervisor_commands() -> list[SupervisorCommandSummary]:
             ),
             created_at=command.created_at,
             updated_at=command.updated_at,
+            workspace_path=command.workspace_path,
         )
         for command in commands
     ]

@@ -17,8 +17,9 @@
 - [-] TASK-049: Pandora Offline Queue — Deferred
 
 ## Phase 2: Context and Safe Patching
-- [ ] TASK-050: Project Workspace — next
-- [ ] TASK-051–058: Context bounds, provider abstractions, repository mapping and safe patching
+- [x] TASK-050: Project Workspace — completed and validated; final suite 806 passed with 1 existing warning
+- [ ] TASK-051: Context Bounds — next
+- [ ] TASK-052–058: Repository mapping, scope lock and safe/AST-aware/structural patching
 
 ## Phase 3: Supervised Self-Development
-- [ ] TASK-059–066: Supervised self-development and autonomous evolution
+- [ ] TASK-059–074: Supervised self-development and autonomous evolution

@@ -423,6 +423,11 @@ class Settings(BaseSettings):
         ge=1_000,
         le=20_000_000,
     )
+    project_workspace_state_max_file_bytes: int = Field(
+        default=65_536,
+        ge=4_096,
+        le=1_048_576,
+    )
     workspace_max_search_results: int = Field(
         default=100,
         ge=1,

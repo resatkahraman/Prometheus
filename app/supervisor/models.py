@@ -265,6 +265,8 @@ class SupervisorCommand(BaseModel):
     archived_at: str | None = None
     project_run_preview_digest: str | None = None
     project_run_workspace_path: str | None = None
+    workspace_path: str = "."
+    project_key: str | None = None
 
     active_operation: str | None = None
     operation_phase: str | None = None
@@ -350,6 +352,7 @@ class SupervisorCreateRequest(BaseModel):
     auto_start: bool = False
     background: bool = False
     force_new: bool = False
+    workspace_path: str | None = Field(default=None, min_length=1, max_length=1_000)
 
 
 class SupervisorDecisionRequest(BaseModel):
@@ -374,6 +377,7 @@ class SupervisorCommandSummary(BaseModel):
     pending_decisions: int
     created_at: str
     updated_at: str
+    workspace_path: str = "."
 
 
 class MissionEventRecord(BaseModel):

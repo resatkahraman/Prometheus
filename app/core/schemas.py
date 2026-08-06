@@ -213,9 +213,14 @@ class AgentRequest(BaseModel):
         default=None,
         pattern=r"^[a-f0-9]{20}$",
     )
+    workspace_path: str | None = Field(default=None, min_length=1, max_length=1_000)
 
     @model_validator(mode="after")
     def validate_agent_input(self):
+        if self.workspace_path is not None:
+            self.workspace_path = self.workspace_path.strip()
+            if not self.workspace_path:
+                raise ValueError("workspace_path boÅŸ olamaz.")
         if bool(self.message) == bool(self.messages):
             raise ValueError(
                 "Tam olarak bir giriş biçimi kullan: 'message' veya 'messages'."
@@ -299,6 +304,7 @@ class AgentResponse(BaseModel):
     trace: list[AgentStep] | None = None
     session_id: str | None = None
     pending_approval: ApprovalInfo | None = None
+    workspace_path: str = "."
 
 
 class ToolInfo(BaseModel):
@@ -315,6 +321,8 @@ class WorkspaceStatus(BaseModel):
     project_types: list[str]
     git_repository: bool
     paid_models_enabled: bool
+    active_workspace_path: str | None = None
+    active_project_key: str | None = None
 
 
 
@@ -354,6 +362,7 @@ class SupervisorCreateRequest(BaseModel):
     auto_start: bool = False
     background: bool = True
     autonomy_mode: AutonomyMode = "task"
+    workspace_path: str | None = Field(default=None, min_length=1, max_length=1_000)
 
     @model_validator(mode="after")
     def validate_supervisor_provider(self):
@@ -361,6 +370,10 @@ class SupervisorCreateRequest(BaseModel):
             raise ValueError(
                 "Supervisor direct routing modunda provider zorunludur."
             )
+        if self.workspace_path is not None:
+            self.workspace_path = self.workspace_path.strip()
+            if not self.workspace_path:
+                raise ValueError("workspace_path cannot be empty.")
         return self
 
 
@@ -517,6 +530,8 @@ class WorkspaceProjectSummary(BaseModel):
     suggested_verifications: list[str] = Field(default_factory=list)
     git: WorkspaceProjectGitStatus = Field(default_factory=WorkspaceProjectGitStatus)
     recent_rank: int | None = None
+    project_key: str = Field(default="pws_" + "0" * 32, pattern=r"^pws_[0-9a-f]{32}$")
+    selected: bool = False
 
 
 class WorkspaceProjectsResponse(BaseModel):
@@ -528,12 +543,45 @@ class WorkspaceProjectsResponse(BaseModel):
 
 
 class WorkspaceProjectSelectRequest(BaseModel):
-    workspace_path: str
+    workspace_path: str = Field(min_length=1, max_length=1_000)
+    expected_revision: int | None = Field(default=None, ge=0)
+    expected_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=200)
+
+    @model_validator(mode="after")
+    def normalize_selection(self):
+        self.workspace_path = self.workspace_path.strip()
+        if not self.workspace_path:
+            raise ValueError("workspace_path boÅŸ olamaz.")
+        if (self.expected_revision is None) != (self.expected_digest is None):
+            if not (self.expected_revision == 0 and self.expected_digest is None):
+                raise ValueError("expected_revision ve expected_digest birlikte kullanÄ±lmalÄ±dÄ±r.")
+        if self.idempotency_key is not None:
+            self.idempotency_key = self.idempotency_key.strip()
+        return self
+
+
+class ProjectWorkspaceBinding(BaseModel):
+    schema_version: Literal[1] = 1
+    project_key: str = Field(pattern=r"^pws_[0-9a-f]{32}$")
+    workspace_path: str = Field(min_length=1, max_length=1_000)
+    revision: int = Field(ge=1)
+    digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    selected_at: str
+    project: WorkspaceProjectSummary
+
+
+class ProjectWorkspaceActiveResponse(BaseModel):
+    state: Literal["missing", "present"]
+    binding: ProjectWorkspaceBinding | None = None
+    side_effect_free: bool = True
 
 
 class WorkspaceProjectSelectResponse(BaseModel):
     project: WorkspaceProjectSummary
     selected: bool = True
+    binding: ProjectWorkspaceBinding
+    replayed: bool = False
 
 
 class ProjectDNAContent(BaseModel):

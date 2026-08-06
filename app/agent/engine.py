@@ -41,6 +41,8 @@ from app.tools.fingerprint import tool_fingerprint
 from app.tools.registry import ToolRegistry
 from app.skills.models import SkillManifest
 from app.skills.registry import SkillManifestRegistry, build_default_skill_registry
+from app.workspace.projects import WorkspaceProjectManager
+from app.workspace.runtime import ProjectWorkspaceRuntimeFactory
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,10 @@ class AgentSession:
     context_expansions: int = 0
     evidence_retries: int = 0
     skill_manifest: SkillManifest | None = None
+    workspace_path: str = "."
+    project_key: str = ""
+    workspace_root: Path | None = None
+    tools: ToolRegistry | None = None
 
 
 def _generated_source_contract_issue(
@@ -136,6 +142,8 @@ class AgentEngine:
         project_dna: ProjectDNAManager | None = None,
         decision_memory: DecisionMemoryManager | None = None,
         skills: SkillManifestRegistry | None = None,
+        workspace_runtime: ProjectWorkspaceRuntimeFactory | None = None,
+        workspace_projects: WorkspaceProjectManager | None = None,
     ) -> None:
         self.settings = settings
         self.orchestrator = orchestrator
@@ -166,6 +174,8 @@ class AgentEngine:
             )
         )
         self.skills = skills if skills is not None else build_default_skill_registry(settings=settings, agents=self.agents, tools=self.tools)
+        self.workspace_projects = workspace_projects or WorkspaceProjectManager(settings.workspace_root, max_file_bytes=settings.workspace_max_file_bytes, max_search_results=settings.workspace_max_search_results)
+        self.workspace_runtime = workspace_runtime or ProjectWorkspaceRuntimeFactory(settings=settings, projects=self.workspace_projects, approvals=self.tools.approvals)
         self._sessions: dict[str, AgentSession] = {}
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._approval_flow_locks: dict[
@@ -205,6 +215,7 @@ class AgentEngine:
         self,
         profile: AgentProfile,
         request: AgentRequest | None = None,
+        tools: ToolRegistry | None = None,
     ) -> str:
         if request is not None and request.response_protocol == "single_patch":
             expected = (request.single_file_path or "").strip()
@@ -266,7 +277,7 @@ Ek rol kuralı: {instructions or "Yok."}
 """
 
         definitions = json.dumps(
-            self.tools.definitions(profile.allowed_tools),
+            (tools or self.tools).definitions(profile.allowed_tools),
             ensure_ascii=False,
             indent=2,
         )
@@ -708,6 +719,7 @@ Kullanılabilir araçlar:
             system_prompt=self._system_prompt(
                 session.profile,
                 session.request,
+                session.tools,
             ),
             temperature=(
                 0.0
@@ -850,6 +862,7 @@ Kullanılabilir araçlar:
                 else None
             ),
             pending_approval=ApprovalInfo(**pending) if pending else None,
+            workspace_path=session.workspace_path,
         )
 
     def _pause(
@@ -957,7 +970,7 @@ Kullanılabilir araçlar:
         failures: list[str] = []
 
         try:
-            dna_context = self.project_dna.context(".")
+            dna_context = self.project_dna.context(session.workspace_path)
         except ProjectDNAError:
             failures.append("project_dna: invalid or unavailable")
         else:
@@ -966,7 +979,7 @@ Kullanılabilir araçlar:
 
         try:
             decision_context = self.decision_memory.context(
-                workspace_path=".",
+                workspace_path=session.workspace_path,
                 mission_id=session.request.usage_scope,
                 paths=target_paths,
             )
@@ -984,7 +997,7 @@ Kullanılabilir araçlar:
                 tool_name="project_summary",
                 arguments={},
             )
-            context["summary"] = await self.tools.execute(
+            context["summary"] = await (session.tools or self.tools).execute(
                 "project_summary",
                 {},
             )
@@ -1003,7 +1016,7 @@ Kullanılabilir araçlar:
                 tool_name="workspace_list",
                 arguments=list_arguments,
             )
-            context["tree"] = await self.tools.execute(
+            context["tree"] = await (session.tools or self.tools).execute(
                 "workspace_list",
                 list_arguments,
             )
@@ -1082,7 +1095,7 @@ Kullanılabilir araçlar:
                     tool_name="workspace_read",
                     arguments=arguments,
                 )
-                content = await self.tools.execute(
+                content = await (session.tools or self.tools).execute(
                     "workspace_read",
                     arguments,
                 )
@@ -1204,7 +1217,7 @@ Kullanılabilir araçlar:
                     tool_name="workspace_read",
                     arguments=arguments_for_read,
                 )
-                result = await self.tools.execute(
+                result = await (session.tools or self.tools).execute(
                     "workspace_read",
                     arguments_for_read,
                 )
@@ -1331,7 +1344,7 @@ Kullanılabilir araçlar:
         session.tools_used.append(suggestion.tool)
         try:
             self._authorize(session, suggestion)
-            result = await self.tools.execute(
+            result = await (session.tools or self.tools).execute(
                 suggestion.tool,
                 suggestion.arguments,
             )
@@ -1395,6 +1408,11 @@ Kullanılabilir araçlar:
 
     async def run(self, request: AgentRequest) -> AgentResponse:
         self._cleanup()
+        try:
+            runtime = self.workspace_runtime.resolve(request.workspace_path)
+        except Exception as exc:
+            raise ValueError("Workspace resolution failed.") from exc
+        request = request.model_copy(update={"workspace_path": runtime.workspace_path})
         profile = self.agents.get(request.agent_id)
         manifest = self.skills.manifest(profile.id)
         if request.exclusive_write_paths and not profile.read_only:
@@ -1467,6 +1485,10 @@ Kullanılabilir araçlar:
             protocol_retries=0,
             base_message_count=len(normalized_messages),
             skill_manifest=manifest,
+            workspace_path=runtime.workspace_path,
+            project_key=runtime.project_key,
+            workspace_root=runtime.project_root,
+            tools=runtime.tools,
         )
 
         await self._bootstrap_context(session)
@@ -2011,7 +2033,7 @@ Kullanılabilir araçlar:
                         tool_name=action.tool,
                         arguments=action.arguments,
                     )
-                    result = await self.tools.execute(
+                    result = await (session.tools or self.tools).execute(
                         action.tool,
                         action.arguments,
                     )
@@ -2132,7 +2154,7 @@ Kullanılabilir araçlar:
                     tool_name=pending.tool_name,
                     arguments=pending.arguments,
                 )
-                result = await self.tools.execute_approved(approval_id)
+                result = await (session.tools or self.tools).execute_approved(approval_id)
                 self._ensure_skill_output_bound(session, result)
                 success = True
             except (ToolError, ValueError, TypeError) as exc:

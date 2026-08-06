@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
+import tempfile
+import threading
+from datetime import datetime, timezone
 from typing import Any
 
 from app.core.schemas import (
@@ -11,6 +16,8 @@ from app.core.schemas import (
     WorkspaceProjectSelectResponse,
     WorkspaceProjectSummary,
     WorkspaceProjectsResponse,
+    ProjectWorkspaceBinding,
+    ProjectWorkspaceActiveResponse,
 )
 from app.workspace.policy import WorkspacePolicy, ToolError
 
@@ -72,6 +79,34 @@ MANIFEST_FILES = {
 
 SOURCE_DIRS = {"src", "app", "tests", "test"}
 
+PROJECT_WORKSPACE_SCHEMA_VERSION = 1
+PROJECT_WORKSPACE_STATE_FILENAME = "project_workspace.json"
+
+
+class ProjectWorkspaceError(RuntimeError):
+    pass
+
+
+class ProjectWorkspaceValidationError(ProjectWorkspaceError, ValueError):
+    pass
+
+
+class ProjectWorkspaceConflictError(ProjectWorkspaceError):
+    pass
+
+
+class ProjectWorkspaceIntegrityError(ProjectWorkspaceError):
+    pass
+
+
+class ProjectWorkspaceStorageError(ProjectWorkspaceError):
+    pass
+
+
+_INVALID_PROJECT_PATH_MESSAGE = (
+    "Ge\u00e7ersiz veya engellenmi\u015f proje yolu."
+)
+
 
 class WorkspaceProjectManager:
     def __init__(
@@ -97,6 +132,99 @@ class WorkspaceProjectManager:
             max_search_results=max_search_results,
         )
         self.recent_file = self.state_root / "recent_projects.json"
+        self.active_file = self.state_root / PROJECT_WORKSPACE_STATE_FILENAME
+        self.max_file_bytes = max_file_bytes
+        self._lock = threading.RLock()
+
+    @staticmethod
+    def _canonical_json_bytes(value: object) -> bytes:
+        return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+
+    @classmethod
+    def _canonical_digest(cls, value: object) -> str:
+        return "sha256:" + hashlib.sha256(cls._canonical_json_bytes(value)).hexdigest()
+
+    @staticmethod
+    def _project_key(workspace_path: str) -> str:
+        return "pws_" + hashlib.sha256(workspace_path.encode("utf-8")).hexdigest()[:32]
+
+    def resolve_project(self, workspace_path: str) -> tuple[str, Path, WorkspaceProjectSummary]:
+        clean = str(workspace_path or ".").strip() or "."
+        if Path(clean).is_absolute() or "\\" in clean:
+            raise ProjectWorkspaceValidationError(_INVALID_PROJECT_PATH_MESSAGE)
+        try:
+            resolved = self.policy.resolve(clean, must_exist=True)
+            self.policy.ensure_not_sensitive(resolved)
+        except Exception as exc:
+            raise ProjectWorkspaceValidationError(_INVALID_PROJECT_PATH_MESSAGE) from exc
+        if not resolved.is_dir() or resolved.is_symlink():
+            raise ProjectWorkspaceValidationError(_INVALID_PROJECT_PATH_MESSAGE)
+        rel = resolved.relative_to(self.workspace_root).as_posix() or "."
+        is_proj, manifests = self._is_project_candidate(resolved)
+        if not is_proj and resolved != self.workspace_root:
+            raise ProjectWorkspaceValidationError(_INVALID_PROJECT_PATH_MESSAGE)
+        summary = WorkspaceProjectSummary(
+            name=resolved.name if rel != "." else self.workspace_root.name,
+            workspace_path=rel,
+            project_key=self._project_key(rel),
+            project_types=self._detect_project_types(resolved, manifests),
+            manifests=manifests,
+            suggested_verifications=self._suggest_verifications(resolved, manifests, self._detect_project_types(resolved, manifests)),
+            git=self._read_git_status(resolved),
+        )
+        return rel, resolved, summary
+
+    def _state_payload(self, document: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(document)
+        payload.pop("digest", None)
+        return payload
+
+    def _binding_from_document(self, document: dict[str, Any]) -> ProjectWorkspaceBinding:
+        rel, _root, summary = self.resolve_project(document["workspace_path"])
+        if rel != document["workspace_path"] or self._project_key(rel) != document["project_key"]:
+            raise ProjectWorkspaceIntegrityError("Active workspace integrity check failed.")
+        if document["digest"] != self._canonical_digest(self._state_payload(document)):
+            raise ProjectWorkspaceIntegrityError("Active workspace integrity check failed.")
+        return ProjectWorkspaceBinding(
+            project_key=document["project_key"], workspace_path=rel,
+            revision=document["revision"], digest=document["digest"],
+            selected_at=document["selected_at"], project=summary,
+        )
+
+    def read_active(self) -> ProjectWorkspaceActiveResponse:
+        with self._lock:
+            if not self.active_file.exists():
+                return ProjectWorkspaceActiveResponse(state="missing", binding=None)
+            if self.active_file.is_symlink() or not self.active_file.is_file() or self.active_file.stat().st_size > self.max_file_bytes:
+                raise ProjectWorkspaceIntegrityError("Active workspace state unavailable.")
+            try:
+                document = json.loads(self.active_file.read_text(encoding="utf-8"))
+                expected = {"schema_version","project_key","workspace_path","revision","selected_at","last_idempotency_key_hash","last_request_fingerprint","digest"}
+                if set(document) != expected or document["schema_version"] != 1 or not isinstance(document["revision"], int) or document["revision"] < 1:
+                    raise ValueError
+                binding = self._binding_from_document(document)
+                return ProjectWorkspaceActiveResponse(state="present", binding=binding)
+            except ProjectWorkspaceError:
+                raise
+            except Exception as exc:
+                raise ProjectWorkspaceIntegrityError("Active workspace state unavailable.") from exc
+
+    def _atomic_write_active(self, document: dict[str, Any]) -> None:
+        self.state_root.mkdir(parents=True, exist_ok=True)
+        temp_path: Path | None = None
+        try:
+            fd, name = tempfile.mkstemp(prefix=".project_workspace-", dir=str(self.state_root))
+            temp_path = Path(name)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+                handle.flush(); os.fsync(handle.fileno())
+            os.replace(temp_path, self.active_file)
+        except Exception as exc:
+            raise ProjectWorkspaceStorageError("Active workspace state could not be stored.") from exc
+        finally:
+            if temp_path is not None and temp_path.exists():
+                try: temp_path.unlink()
+                except OSError: pass
 
     def _is_ignored_directory(self, rel_path: Path, name: str) -> bool:
         if name in IGNORE_DIRS:
@@ -447,6 +575,8 @@ class WorkspaceProjectManager:
             pass
 
         summaries: list[WorkspaceProjectSummary] = []
+        active = self.read_active()
+        active_binding = active.binding
 
         for candidate in candidate_dirs:
             is_proj, manifests = self._is_project_candidate(candidate)
@@ -476,6 +606,8 @@ class WorkspaceProjectManager:
                     suggested_verifications=suggested_verifications,
                     git=git_status,
                     recent_rank=recent_rank,
+                    project_key=self._project_key(rel_path),
+                    selected=active_binding is not None and active_binding.workspace_path == rel_path,
                 )
             )
 
@@ -499,7 +631,40 @@ class WorkspaceProjectManager:
             truncated=truncated,
         )
 
-    def select_project(self, workspace_path: str) -> WorkspaceProjectSelectResponse:
+    def select_project(self, request: "WorkspaceProjectSelectRequest | str") -> WorkspaceProjectSelectResponse:
+        from app.core.schemas import WorkspaceProjectSelectRequest
+        if isinstance(request, str):
+            request = WorkspaceProjectSelectRequest(workspace_path=request)
+        with self._lock:
+            rel_path, resolved, summary = self.resolve_project(request.workspace_path)
+            current = self.read_active()
+            if request.expected_revision is not None:
+                if current.state == "missing":
+                    if request.expected_revision != 0:
+                        raise ProjectWorkspaceConflictError("Active workspace revision conflict.")
+                elif current.binding is None or current.binding.revision != request.expected_revision or current.binding.digest != request.expected_digest:
+                    raise ProjectWorkspaceConflictError("Active workspace revision conflict.")
+            key_hash = hashlib.sha256(request.idempotency_key.encode("utf-8")).hexdigest() if request.idempotency_key else None
+            revision = current.binding.revision + 1 if current.binding else 1
+            selected_at = datetime.now(timezone.utc).isoformat()
+            payload = {
+                "schema_version": 1, "project_key": self._project_key(rel_path),
+                "workspace_path": rel_path, "revision": revision, "selected_at": selected_at,
+                "last_idempotency_key_hash": key_hash, "last_request_fingerprint": self._canonical_digest({"workspace_path": rel_path, "idempotency_key_hash": key_hash}) if key_hash else None,
+            }
+            if current.binding and key_hash and current.binding.project_key == payload["project_key"]:
+                try:
+                    old = json.loads(self.active_file.read_text(encoding="utf-8"))
+                    if old.get("last_idempotency_key_hash") == key_hash:
+                        return WorkspaceProjectSelectResponse(project=summary, selected=True, binding=current.binding, replayed=True)
+                except Exception: pass
+            payload["digest"] = self._canonical_digest(payload)
+            self._atomic_write_active(payload)
+            verified = self.read_active().binding
+            self._save_recent_projects(rel_path)
+            summary.selected = True
+            summary.recent_rank = 1
+            return WorkspaceProjectSelectResponse(project=summary, selected=True, binding=verified, replayed=False)
         clean_path = workspace_path.strip() if workspace_path else "."
         if not clean_path:
             clean_path = "."
@@ -508,7 +673,7 @@ class WorkspaceProjectManager:
             resolved = self.policy.resolve(clean_path, must_exist=True)
             self.policy.ensure_not_sensitive(resolved)
         except (ToolError, ValueError, OSError) as exc:
-            raise ValueError(f"Geçersiz veya engellenmiş proje yolu '{workspace_path}': {exc}") from exc
+            raise ProjectWorkspaceValidationError(_INVALID_PROJECT_PATH_MESSAGE) from exc
 
         if not resolved.is_dir():
             raise ValueError(f"Proje yolu bir klasör olmalıdır: '{workspace_path}'")
