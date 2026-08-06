@@ -364,7 +364,7 @@ class SupervisorCreateRequest(BaseModel):
 
 
 class SupervisorDecisionRequest(BaseModel):
-    answer: str = Field(min_length=1)
+    answer: str = Field(min_length=1, max_length=4_000)
     replan_when_complete: bool = True
     background: bool = False
 
@@ -573,6 +573,222 @@ class ProjectDNAResponse(BaseModel):
     side_effect_free: bool
 
 
+DecisionMemoryScopeKind = Literal[
+    "project",
+    "mission",
+    "branch",
+    "path",
+]
+
+DecisionMemorySourceKind = Literal[
+    "user",
+    "mission",
+    "supervisor_decision",
+    "file",
+    "commit",
+    "receipt",
+    "checkpoint",
+    "event",
+]
+
+DecisionMemoryStatus = Literal[
+    "active",
+    "superseded",
+]
+
+
+class DecisionMemoryScope(BaseModel):
+    kind: DecisionMemoryScopeKind = "project"
+    ref: str | None = Field(default=None, max_length=1_000)
+
+    @model_validator(mode="after")
+    def validate_scope_ref(self):
+        if self.kind == "project":
+            if self.ref is not None:
+                raise ValueError("project scope ref must be null")
+        elif not isinstance(self.ref, str) or not self.ref.strip():
+            raise ValueError("non-project scope ref is required")
+        return self
+
+
+class DecisionMemorySourceRef(BaseModel):
+    kind: DecisionMemorySourceKind
+    value: str = Field(min_length=1, max_length=1_000)
+    digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class DecisionMemoryCreateRequest(BaseModel):
+    confirmation: Literal["record_decision"]
+    workspace_path: str = Field(
+        default=".",
+        min_length=1,
+        max_length=1_000,
+    )
+    expected_store_revision: int = Field(default=0, ge=0)
+    expected_store_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+    decision_key: str = Field(
+        min_length=1,
+        max_length=160,
+        pattern=r"^[a-z0-9][a-z0-9._-]{0,159}$",
+    )
+    title: str = Field(min_length=1, max_length=160)
+    context: str = Field(min_length=1, max_length=4_000)
+    decision: str = Field(min_length=1, max_length=4_000)
+    reason: str = Field(min_length=1, max_length=4_000)
+
+    alternatives: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    consequences: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+
+    scope: DecisionMemoryScope = Field(
+        default_factory=DecisionMemoryScope,
+    )
+    source_refs: list[DecisionMemorySourceRef] = Field(
+        min_length=1,
+        max_length=32,
+    )
+
+    created_in_mission: str | None = Field(
+        default=None,
+        max_length=160,
+    )
+    supersedes: str | None = Field(
+        default=None,
+        pattern=r"^dmem_[0-9a-f]{32}$",
+    )
+
+
+class SupervisorDecisionRememberRequest(BaseModel):
+    confirmation: Literal["record_decision"]
+    workspace_path: str = Field(
+        default=".",
+        min_length=1,
+        max_length=1_000,
+    )
+    expected_store_revision: int = Field(default=0, ge=0)
+    expected_store_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+    title: str = Field(min_length=1, max_length=160)
+    reason: str = Field(min_length=1, max_length=4_000)
+    alternatives: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    consequences: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+
+    scope: DecisionMemoryScope = Field(
+        default_factory=DecisionMemoryScope,
+    )
+    source_refs: list[DecisionMemorySourceRef] = Field(
+        default_factory=list,
+        max_length=29,
+    )
+    supersedes: str | None = Field(
+        default=None,
+        pattern=r"^dmem_[0-9a-f]{32}$",
+    )
+
+
+class DecisionMemoryRecord(BaseModel):
+    schema_version: int = Field(default=1, ge=1, le=1)
+    decision_id: str = Field(
+        pattern=r"^dmem_[0-9a-f]{32}$",
+    )
+    decision_key: str = Field(
+        min_length=1,
+        max_length=160,
+        pattern=r"^[a-z0-9][a-z0-9._-]{0,159}$",
+    )
+    decision_revision: int = Field(ge=1)
+    store_revision: int = Field(ge=1)
+
+    title: str = Field(min_length=1, max_length=160)
+    context: str = Field(min_length=1, max_length=4_000)
+    decision: str = Field(min_length=1, max_length=4_000)
+    reason: str = Field(min_length=1, max_length=4_000)
+
+    alternatives: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+    consequences: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+    )
+
+    scope: DecisionMemoryScope
+    source_refs: list[DecisionMemorySourceRef] = Field(
+        min_length=1,
+        max_length=32,
+    )
+
+    created_in_mission: str | None = Field(
+        default=None,
+        max_length=160,
+    )
+    supersedes: str | None = Field(
+        default=None,
+        pattern=r"^dmem_[0-9a-f]{32}$",
+    )
+
+    status: DecisionMemoryStatus
+    created_at: str
+    record_hash: str = Field(
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
+class DecisionMemoryPage(BaseModel):
+    workspace_path: str
+    state: Literal["missing", "present"]
+    project_id: str | None = Field(
+        default=None,
+        pattern=r"^dmemproj_[0-9a-f]{32}$",
+    )
+    store_revision: int = Field(default=0, ge=0)
+    store_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    items: list[DecisionMemoryRecord] = Field(default_factory=list)
+    total: int = Field(default=0, ge=0)
+    next_after_revision: int | None = Field(default=None, ge=1)
+    side_effect_free: bool = True
+
+
+class DecisionMemoryWriteResponse(BaseModel):
+    workspace_path: str
+    project_id: str = Field(
+        pattern=r"^dmemproj_[0-9a-f]{32}$",
+    )
+    store_revision: int = Field(ge=1)
+    store_digest: str = Field(
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    record: DecisionMemoryRecord
+    created: bool = True
+    replayed: bool = False
+    side_effect_free: bool = False
 class ProjectRunHistoryTaskSummary(BaseModel):
     task_id: str
     title: str

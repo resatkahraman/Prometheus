@@ -74,6 +74,12 @@ from app.core.schemas import (
     WorkspaceProjectSelectResponse,
     ProjectDNAResponse,
     ProjectDNAUpdateRequest,
+    DecisionMemoryCreateRequest,
+    DecisionMemoryPage,
+    DecisionMemoryRecord,
+    DecisionMemoryWriteResponse,
+    DecisionMemoryScopeKind,
+    SupervisorDecisionRememberRequest,
     ProjectRunHistoryResponse,
     ProjectRunRetryRequest,
     ProjectRunRetryResponse,
@@ -193,6 +199,14 @@ from app.memory.project_dna import (
     ProjectDNAManager,
     ProjectDNAValidationError,
 )
+from app.memory.decision_memory import (
+    DecisionMemoryConflictError,
+    DecisionMemoryError,
+    DecisionMemoryIntegrityError,
+    DecisionMemoryManager,
+    DecisionMemoryNotFoundError,
+    DecisionMemoryValidationError,
+)
 from app.branding import BRAND_NAME, BRAND_STAGE, BRAND_VERSION
 
 
@@ -238,12 +252,22 @@ async def lifespan(app: FastAPI):
         max_context_chars=settings.project_dna_context_max_chars,
         max_search_results=settings.workspace_max_search_results,
     )
+    decision_memory = DecisionMemoryManager(
+        workspace_root=settings.workspace_root,
+        enabled=settings.decision_memory_enabled,
+        max_file_bytes=settings.decision_memory_max_file_bytes,
+        max_records=settings.decision_memory_max_records,
+        max_context_chars=settings.decision_memory_max_context_chars,
+        max_results=settings.decision_memory_max_results,
+        max_search_results=settings.workspace_max_search_results,
+    )
     agent = AgentEngine(
         settings=settings,
         orchestrator=orchestrator,
         tools=tools,
         agents=agents,
         project_dna=project_dna,
+        decision_memory=decision_memory,
     )
     supervisor = SupervisorService(
         settings=settings,
@@ -251,6 +275,7 @@ async def lifespan(app: FastAPI):
         agents=agents,
         tools=tools,
         project_dna=project_dna,
+        decision_memory=decision_memory,
     )
 
     app.state.settings = settings
@@ -264,6 +289,7 @@ async def lifespan(app: FastAPI):
     app.state.agents = agents
     app.state.agent = agent
     app.state.project_dna = project_dna
+    app.state.decision_memory = decision_memory
     app.state.supervisor = supervisor
     app.state.workspace_projects = WorkspaceProjectManager(settings.workspace_root)
     app.state.improvement = supervisor.improvement
@@ -1732,6 +1758,103 @@ async def update_workspace_project_dna(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ProjectDNAError as exc:
         raise HTTPException(status_code=503, detail="Project DNA is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.get(
+    "/v1/workspace/decision-memory",
+    response_model=DecisionMemoryPage,
+    tags=["workspace"],
+)
+async def list_workspace_decision_memory(
+    response: Response,
+    workspace_path: str = ".",
+    active_only: bool = True,
+    scope_kind: DecisionMemoryScopeKind | None = None,
+    after_revision: int | None = None,
+    limit: int = 50,
+) -> DecisionMemoryPage:
+    try:
+        result = app.state.decision_memory.list(workspace_path=workspace_path, active_only=active_only, scope_kind=scope_kind, after_revision=after_revision, limit=limit)
+    except DecisionMemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DecisionMemoryIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DecisionMemoryError as exc:
+        raise HTTPException(status_code=503, detail="Decision Memory is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.get(
+    "/v1/workspace/decision-memory/decisions/{decision_id}",
+    response_model=DecisionMemoryRecord,
+    tags=["workspace"],
+)
+async def read_workspace_decision_memory_record(
+    decision_id: str,
+    response: Response,
+    workspace_path: str = ".",
+) -> DecisionMemoryRecord:
+    try:
+        result = app.state.decision_memory.read(workspace_path=workspace_path, decision_id=decision_id)
+    except DecisionMemoryNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DecisionMemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except DecisionMemoryIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DecisionMemoryError as exc:
+        raise HTTPException(status_code=503, detail="Decision Memory is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.post(
+    "/v1/workspace/decision-memory/decisions",
+    response_model=DecisionMemoryWriteResponse,
+    tags=["workspace"],
+)
+async def create_workspace_decision_memory_record(
+    payload: DecisionMemoryCreateRequest,
+    response: Response,
+) -> DecisionMemoryWriteResponse:
+    try:
+        result = app.state.decision_memory.create(payload)
+    except DecisionMemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (DecisionMemoryConflictError, DecisionMemoryIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DecisionMemoryError as exc:
+        raise HTTPException(status_code=503, detail="Decision Memory is unavailable.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.post(
+    "/v1/supervisor/commands/{command_id}/decisions/{decision_id}/remember",
+    response_model=DecisionMemoryWriteResponse,
+    tags=["supervisor"],
+)
+async def remember_supervisor_decision(
+    command_id: str,
+    decision_id: str,
+    payload: SupervisorDecisionRememberRequest,
+    response: Response,
+) -> DecisionMemoryWriteResponse:
+    try:
+        result = await app.state.supervisor.remember_decision(command_id=command_id, decision_id=decision_id, request=payload)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Decision not found.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DecisionMemoryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (DecisionMemoryConflictError, DecisionMemoryIntegrityError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DecisionMemoryError as exc:
+        raise HTTPException(status_code=503, detail="Decision Memory is unavailable.") from exc
     response.headers["Cache-Control"] = "no-store"
     return result
 

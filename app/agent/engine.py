@@ -34,6 +34,7 @@ from app.core.schemas import (
 )
 from app.memory.project import ProjectMemoryStore
 from app.memory.project_dna import ProjectDNAError, ProjectDNAManager
+from app.memory.decision_memory import DecisionMemoryError, DecisionMemoryManager
 from app.orchestration.orchestrator import Orchestrator
 from app.tools.base import ToolApprovalRequired, ToolError
 from app.tools.fingerprint import tool_fingerprint
@@ -130,6 +131,7 @@ class AgentEngine:
         tools: ToolRegistry,
         agents: AgentRegistry | None = None,
         project_dna: ProjectDNAManager | None = None,
+        decision_memory: DecisionMemoryManager | None = None,
     ) -> None:
         self.settings = settings
         self.orchestrator = orchestrator
@@ -143,6 +145,19 @@ class AgentEngine:
                 enabled=settings.project_dna_enabled,
                 max_file_bytes=settings.project_dna_max_file_bytes,
                 max_context_chars=settings.project_dna_context_max_chars,
+                max_search_results=settings.workspace_max_search_results,
+            )
+        )
+        self.decision_memory = (
+            decision_memory
+            if decision_memory is not None
+            else DecisionMemoryManager(
+                workspace_root=settings.workspace_root,
+                enabled=settings.decision_memory_enabled,
+                max_file_bytes=settings.decision_memory_max_file_bytes,
+                max_records=settings.decision_memory_max_records,
+                max_context_chars=settings.decision_memory_max_context_chars,
+                max_results=settings.decision_memory_max_results,
                 max_search_results=settings.workspace_max_search_results,
             )
         )
@@ -895,19 +910,20 @@ Kullanılabilir araçlar:
         if session.next_step > session.max_steps:
             return
 
+        target_paths = list(
+            dict.fromkeys(
+                [
+                    *session.request.exclusive_write_paths,
+                    *session.request.additional_write_paths,
+                ]
+            )
+        )
         context: dict[str, Any] = {
             "summary": None,
             "tree": None,
             "files": [],
             "selection": {
-                "target_paths": list(
-                    dict.fromkeys(
-                        [
-                            *session.request.exclusive_write_paths,
-                            *session.request.additional_write_paths,
-                        ]
-                    )
-                ),
+                "target_paths": target_paths,
                 "selected_paths": [],
             },
         }
@@ -920,6 +936,20 @@ Kullanılabilir araçlar:
         else:
             if dna_context is not None:
                 context["project_dna"] = dna_context.to_prompt_payload()
+
+        try:
+            decision_context = self.decision_memory.context(
+                workspace_path=".",
+                mission_id=session.request.usage_scope,
+                paths=target_paths,
+            )
+        except DecisionMemoryError as exc:
+            raise RuntimeError(
+                "Decision Memory is invalid or unavailable."
+            ) from exc
+        else:
+            if decision_context is not None:
+                context["decision_memory"] = decision_context.to_prompt_payload()
 
         try:
             self.agents.authorize(

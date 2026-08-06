@@ -12,8 +12,8 @@
 - [x] TASK-044: Mission History and Post-Run Summary
 - [x] TASK-045: Session Branching
 - [x] TASK-046: Project DNA
-- [ ] TASK-047: Decision Memory — next
-- [ ] TASK-048: Skill Manifest
+- [x] TASK-047: Decision Memory
+- [ ] TASK-048: Skill Manifest — next
 - [-] TASK-049: Pandora Offline Queue — Deferred
 
 ## Phase 2: Context and Safe Patching

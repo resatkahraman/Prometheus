@@ -168,6 +168,27 @@ class Settings(BaseSettings):
         ge=1_000,
         le=32_000,
     )
+    decision_memory_enabled: bool = True
+    decision_memory_max_file_bytes: int = Field(
+        default=1_048_576,
+        ge=65_536,
+        le=8_388_608,
+    )
+    decision_memory_max_records: int = Field(
+        default=512,
+        ge=1,
+        le=5_000,
+    )
+    decision_memory_max_context_chars: int = Field(
+        default=12_000,
+        ge=1_000,
+        le=64_000,
+    )
+    decision_memory_max_results: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+    )
     context_compiler_mode: Literal["off", "shadow", "active"] = "active"
     context_compiler_shadow_budget_chars: int = Field(
         default=8_000,

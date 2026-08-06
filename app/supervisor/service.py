@@ -34,6 +34,10 @@ from app.core.schemas import (
     ProjectRunHistoryTaskSummary,
     ProjectRunRetryRequest,
     ProjectRunRetryResponse,
+    DecisionMemoryCreateRequest,
+    DecisionMemorySourceRef,
+    DecisionMemoryWriteResponse,
+    SupervisorDecisionRememberRequest,
 )
 from app.supervisor.run_snapshots import RunSnapshotManager
 from app.workspace.policy import WorkspacePolicy
@@ -42,6 +46,12 @@ from app.memory.attention import AttentionBroker
 from app.memory.context_compiler import ContextCompiler, ContextSegment
 from app.memory.project import FileMemory, ProjectMemoryStore
 from app.memory.project_dna import ProjectDNAError, ProjectDNAManager
+from app.memory.decision_memory import (
+    DecisionMemoryError,
+    DecisionMemoryManager,
+    DecisionMemoryValidationError,
+    normalize_decision_text,
+)
 from app.improvement.service import ImprovementService
 from app.improvement.forge import PrometheusForge
 from app.planning.integrity import validate_planning_document
@@ -166,6 +176,7 @@ class SupervisorService:
         execution_receipt_store: ExecutionReceiptStore | None = None,
         mission_checkpoint_store: MissionCheckpointStore | None = None,
         project_dna: ProjectDNAManager | None = None,
+        decision_memory: DecisionMemoryManager | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = WorkspacePolicy(
@@ -187,6 +198,19 @@ class SupervisorService:
                 enabled=settings.project_dna_enabled,
                 max_file_bytes=settings.project_dna_max_file_bytes,
                 max_context_chars=settings.project_dna_context_max_chars,
+                max_search_results=settings.workspace_max_search_results,
+            )
+        )
+        self.decision_memory = (
+            decision_memory
+            if decision_memory is not None
+            else DecisionMemoryManager(
+                workspace_root=settings.workspace_root,
+                enabled=settings.decision_memory_enabled,
+                max_file_bytes=settings.decision_memory_max_file_bytes,
+                max_records=settings.decision_memory_max_records,
+                max_context_chars=settings.decision_memory_max_context_chars,
+                max_results=settings.decision_memory_max_results,
                 max_search_results=settings.workspace_max_search_results,
             )
         )
@@ -1806,6 +1830,81 @@ class SupervisorService:
             return ""
         return context.text if context is not None else ""
 
+    def _decision_memory_prompt_text(
+        self,
+        *,
+        mission_id: str | None = None,
+        paths: list[str] | None = None,
+    ) -> str:
+        manager = getattr(self, "decision_memory", None)
+        if manager is None:
+            return ""
+        try:
+            context = manager.context(
+                workspace_path=".",
+                mission_id=mission_id,
+                paths=paths,
+            )
+        except DecisionMemoryError as exc:
+            raise RuntimeError(
+                "Decision Memory is invalid or unavailable."
+            ) from exc
+        if context is None:
+            return ""
+        return context.text
+
+    def _apply_persistent_decision_memory(self, *, decision: SupervisorDecision, command: SupervisorCommand) -> bool:
+        try:
+            record = self.decision_memory.find_active(workspace_path=".", decision_key=self._decision_key(decision.question))
+        except DecisionMemoryError as exc:
+            raise ValueError("Decision Memory integrity validation failed.") from exc
+        if record is None:
+            return False
+        decision.status = "answered"
+        decision.answer = record.decision
+        decision.auto_resolved = True
+        decision.source_decision_id = record.decision_id
+        return True
+
+    async def remember_decision(
+        self,
+        *,
+        command_id: str,
+        decision_id: str,
+        request: SupervisorDecisionRememberRequest,
+    ) -> DecisionMemoryWriteResponse:
+        command = await self.store.get(command_id)
+        decision = next((item for item in command.decisions if item.id == decision_id), None)
+        if decision is None:
+            raise KeyError("Decision not found.")
+        if decision.status != "answered" or decision.auto_resolved or not decision.answer:
+            raise ValueError("Only an explicit answered decision can be remembered.")
+        sources = list(request.source_refs)
+        sources.extend([
+            DecisionMemorySourceRef(kind="user", value="explicit"),
+            DecisionMemorySourceRef(kind="mission", value=command_id),
+            DecisionMemorySourceRef(kind="event", value=decision_id),
+        ])
+        create_request = DecisionMemoryCreateRequest(
+            confirmation=request.confirmation,
+            workspace_path=request.workspace_path,
+            expected_store_revision=request.expected_store_revision,
+            expected_store_digest=request.expected_store_digest,
+            idempotency_key=request.idempotency_key,
+            decision_key=self._decision_key(decision.question),
+            title=request.title,
+            context=decision.question,
+            decision=normalize_decision_text(decision.answer, field_name="answer", max_chars=4_000),
+            reason=request.reason,
+            alternatives=request.alternatives,
+            consequences=request.consequences,
+            scope=request.scope,
+            source_refs=sources[:32],
+            created_in_mission=command_id,
+            supersedes=request.supersedes,
+        )
+        return self.decision_memory.create(create_request)
+
     def _planner_prompt(
         self,
         goal: str,
@@ -1837,12 +1936,18 @@ Markdown tablosu kullanma.
             "\n\nAuthoritative Project DNA:\n" + project_dna
             if project_dna else ""
         )
+        decision_memory = self._decision_memory_prompt_text()
+        decision_memory_block = (
+            "\n\nExplicit Decision Memory (read-only):\n" + decision_memory
+            if decision_memory else ""
+        )
 
         return f"""Ana hedef:
 {goal}
 {decisions}
 {failure_guidance}
 {project_dna_block}
+{decision_memory_block}
 
 Projeyi gerçek workspace içeriğine göre incele ve yürütülebilir görev
 grafiğine dönüştür.
@@ -2584,6 +2689,16 @@ grafiğine dönüştür.
             resolved=resolved_memory,
         )
         command.decisions = decisions
+
+        for decision in command.decisions:
+            if decision.status == "pending":
+                try:
+                    self._apply_persistent_decision_memory(
+                        decision=decision,
+                        command=command,
+                    )
+                except ValueError:
+                    raise
 
         for item in auto_resolved:
             self._event(
@@ -4476,9 +4591,26 @@ grafiğine dönüştür.
         )
         context_result = compiled_context or context
         project_dna = self._project_dna_prompt_text()
-        if project_dna:
+        decision_memory_paths = list(
+            dict.fromkeys(
+                [
+                    target_path,
+                    *task.exact_files,
+                ]
+            )
+        )
+        decision_memory = self._decision_memory_prompt_text(
+            paths=decision_memory_paths,
+        )
+        prefix = "\n\n".join(
+            item for item in (
+                project_dna,
+                decision_memory,
+            ) if item
+        )
+        if prefix:
             return self._focused_context_clip(
-                project_dna + "\n\n" + context_result,
+                prefix + "\n\n" + context_result,
                 self.settings.supervisor_focused_context_max_chars,
             )
         return context_result
