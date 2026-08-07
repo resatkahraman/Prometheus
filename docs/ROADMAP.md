@@ -20,7 +20,8 @@
 - [x] TASK-050: Project Workspace — completed and validated; final suite 806 passed with 1 existing warning
 - [x] TASK-051: Context Bounds
 - [x] TASK-052: Canonical Repository Map
-- [ ] TASK-053–058: Scope lock and safe/AST-aware/structural patching
+- [x] TASK-053: Scope Lock
+- [ ] TASK-054–058: Safe/AST-aware/structural patching
 
 ## Phase 3: Supervised Self-Development
 - [ ] TASK-059–074: Supervised self-development and autonomous evolution

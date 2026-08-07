@@ -1,11 +1,11 @@
 # Prometheus Project Status
 
-Current phase: Canonical repository map completed
-Last completed task: TASK-052 — Canonical Repository Map
-TASK-052 status: Completed and validated
-Baseline before TASK-052: e6047f78bdec4f26a5c0eacb6a460fa6273c9513
+Current phase: Scope Lock completed
+Last completed task: TASK-053 — Scope Lock
+TASK-053 status: Completed and validated
+Baseline before TASK-053: 92f47af6e266a72fc800b62123948ce178b7845e
 Implementation commit: The Git commit containing this status update
-TASK-052 Canonical Repository Map completed. Prometheus now has a deterministic, bounded, metadata-only repository inventory bound to the TASK-050 Project Workspace snapshot. The map uses project-relative paths, canonical ordering/digesting, explicit traversal limits, symlink-safe confinement, and key/protected-path annotations without reading source contents.
-Validation: 18 targeted passed; 4 narrow regression checks passed after the entry-contract correction; 77 focused passed with 1 existing warning; 832 full-suite passed with 1 existing warning.
-Next task: TASK-053 — Scope Lock
+TASK-053 Scope Lock completed. Prometheus now has an immutable, project-bound, exact-file write-scope contract rooted in a verified TASK-052 Repository Map. Protected paths always override requested scope, incomplete maps fail closed, existing targets must belong to the canonical map, explicitly scoped new files are supported, and runtime authorization rechecks path/symlink safety through WorkspacePolicy.
+Validation: 7 narrow regression tests passed after targeted corrections; 23 targeted Scope Lock tests passed; 93 focused security regression tests passed; 855 full-suite tests passed with 1 existing warning.
+Next task: TASK-054 — Safe Patching
 Pandora: Core completed through TASK-039; further development intentionally deferred.
