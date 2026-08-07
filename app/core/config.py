@@ -438,6 +438,9 @@ class Settings(BaseSettings):
         ge=1,
         le=1_000,
     )
+    repository_map_max_entries: int = Field(default=5_000, ge=100, le=50_000)
+    repository_map_max_depth: int = Field(default=20, ge=1, le=64)
+    repository_map_max_path_chars: int = Field(default=1_000, ge=64, le=4_000)
     command_timeout_seconds: int = Field(default=300, ge=5, le=3_600)
     command_output_max_chars: int = Field(
         default=30_000,
