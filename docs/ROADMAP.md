@@ -21,7 +21,8 @@
 - [x] TASK-051: Context Bounds
 - [x] TASK-052: Canonical Repository Map
 - [x] TASK-053: Scope Lock
-- [ ] TASK-054–058: Safe/AST-aware/structural patching
+- [x] TASK-054: Canonical Safe Patch Plan
+- [ ] TASK-055–058: Safe/AST-aware/structural patch execution
 
 ## Phase 3: Supervised Self-Development
 - [ ] TASK-059–074: Supervised self-development and autonomous evolution
