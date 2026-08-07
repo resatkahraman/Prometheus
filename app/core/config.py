@@ -343,6 +343,11 @@ class Settings(BaseSettings):
         ge=2_000,
         le=50_000,
     )
+    supervisor_planner_context_max_chars: int = Field(
+        default=24_000,
+        ge=4_000,
+        le=100_000,
+    )
     supervisor_focused_related_full_files: int = Field(
         default=1,
         ge=0,

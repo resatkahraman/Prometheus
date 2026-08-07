@@ -43,6 +43,7 @@ from app.skills.models import SkillManifest
 from app.skills.registry import SkillManifestRegistry, build_default_skill_registry
 from app.workspace.projects import WorkspaceProjectManager
 from app.workspace.runtime import ProjectWorkspaceRuntimeFactory
+from app.memory.context_bounds import ContextBounds
 
 
 @dataclass(frozen=True)
@@ -674,7 +675,7 @@ Kullanılabilir araçlar:
                     content=(
                         self._clip_prompt_text(
                             serialized,
-                            context_budget,
+                            max(1, context_budget - len("\nBu görev için seçilmiş bağlamı kullan.")),
                         )
                         + "\nBu görev için seçilmiş bağlamı kullan."
                     ),

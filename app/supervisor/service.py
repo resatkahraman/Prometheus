@@ -43,6 +43,7 @@ from app.supervisor.run_snapshots import RunSnapshotManager
 from app.workspace.policy import WorkspacePolicy
 from app.workspace.projects import WorkspaceProjectManager
 from app.workspace.runtime import ProjectWorkspaceRuntimeFactory, ProjectWorkspaceRuntime
+from app.memory.context_bounds import ContextBounds, ContextPart
 from app.approvals.manager import ApprovalManager
 from app.tools.base import ToolError
 from app.memory.attention import AttentionBroker
@@ -1940,7 +1941,7 @@ class SupervisorService:
         )
         return self.decision_memory.create(create_request)
 
-    def _planner_prompt(
+    def _planner_prompt_unbounded(
         self,
         goal: str,
         decision_answers: list[tuple[str, str]] | None = None,
@@ -1998,6 +1999,25 @@ grafiğine dönüştür.
   Kararları bölümüne yaz ve varsayıma dayalı uygulama görevini zorunlu yapma.
 - Her görev tek bir agente atanabilir, ölçülebilir ve kanıtlı olsun.
 - Hiçbir dosyayı değiştirme."""
+
+    def _planner_prompt(
+        self,
+        goal: str,
+        decision_answers: list[tuple[str, str]] | None = None,
+        previous_failure: str | None = None,
+        workspace_path: str = ".",
+    ) -> str:
+        raw = self._planner_prompt_unbounded(goal, decision_answers, previous_failure)
+        return ContextBounds.assemble(
+            [ContextPart(id="planner-contract", text=raw, priority=120, required=True)],
+            max_chars=self._planner_context_max_chars(),
+        ).text
+
+    def _planner_context_max_chars(self) -> int:
+        settings = getattr(self, "settings", None)
+        if settings is None:
+            return 24_000
+        return settings.supervisor_planner_context_max_chars
 
     async def _plan(
         self,
@@ -4081,12 +4101,13 @@ grafiğine dönüştür.
         head = int(available * 0.7)
         return text[:head] + marker + text[-(available - head) :]
 
-    def _raw_workspace_text(self, path: str) -> str | None:
+    def _raw_workspace_text(self, path: str, workspace: WorkspacePolicy | None = None) -> str | None:
         """Read one safe UTF-8 file through the central workspace policy."""
 
         try:
-            candidate = self.workspace.resolve(path, must_exist=True)
-            self.workspace.ensure_text_file(candidate)
+            policy = workspace or self.workspace
+            candidate = policy.resolve(path, must_exist=True)
+            policy.ensure_text_file(candidate)
             return candidate.read_text(encoding="utf-8")
         except (ToolError, OSError, UnicodeError):
             return None
@@ -4369,7 +4390,15 @@ grafiğine dönüştür.
         task: SupervisorTask,
         *,
         target_path: str,
+        workspace_path: str = ".",
     ) -> str:
+        runtime = self.workspace_runtime.resolve(workspace_path)
+        scoped_tools = runtime.tools
+        scoped_workspace = WorkspacePolicy(
+            root=runtime.project_root,
+            max_file_bytes=self.settings.workspace_max_file_bytes,
+            max_search_results=self.settings.workspace_max_search_results,
+        )
         snapshots: dict[str, tuple[dict[str, Any], FileMemory]] = {}
         missing: list[str] = []
 
@@ -4392,7 +4421,7 @@ grafiğine dönüştür.
         )
         for path in candidate_paths:
             try:
-                result = await self.tools.execute(
+                result = await scoped_tools.execute(
                     "workspace_read",
                     {
                         "path": path,
@@ -4403,7 +4432,7 @@ grafiğine dönüştür.
             except Exception:
                 missing.append(path)
                 continue
-            raw_content = self._raw_workspace_text(path)
+            raw_content = self._raw_workspace_text(path, scoped_workspace)
             if raw_content is not None:
                 result = {**result, "content": raw_content}
             memory = await self.project_memory.remember_file(
@@ -4427,7 +4456,7 @@ grafiğine dönüştür.
             if path in snapshots:
                 continue
             try:
-                result = await self.tools.execute(
+                result = await scoped_tools.execute(
                     "workspace_read",
                     {
                         "path": path,
@@ -4437,7 +4466,7 @@ grafiğine dönüştür.
                 )
             except Exception:
                 continue
-            raw_content = self._raw_workspace_text(path)
+            raw_content = self._raw_workspace_text(path, scoped_workspace)
             if raw_content is not None:
                 result = {**result, "content": raw_content}
             memory = await self.project_memory.remember_file(
@@ -4568,7 +4597,7 @@ grafiğine dönüştür.
         for path in full_paths:
             result, memory = snapshots[path]
             role = "HEDEF" if path == target_path else "İLGİLİ"
-            raw_content = self._raw_workspace_text(path)
+            raw_content = self._raw_workspace_text(path, scoped_workspace)
             content = self._focused_context_clip(
                 (
                     raw_content
@@ -4631,7 +4660,7 @@ grafiğine dönüştür.
             include_hypotheses=creative_context,
         )
         context_result = compiled_context or context
-        project_dna = self._project_dna_prompt_text()
+        project_dna = self._project_dna_prompt_text(workspace_path)
         decision_memory_paths = list(
             dict.fromkeys(
                 [
@@ -4641,20 +4670,25 @@ grafiğine dönüştür.
             )
         )
         decision_memory = self._decision_memory_prompt_text(
+            workspace_path=workspace_path,
             paths=decision_memory_paths,
         )
-        prefix = "\n\n".join(
-            item for item in (
-                project_dna,
-                decision_memory,
-            ) if item
-        )
-        if prefix:
-            return self._focused_context_clip(
-                prefix + "\n\n" + context_result,
-                self.settings.supervisor_focused_context_max_chars,
+        parts = [
+            ContextPart(
+                id="focused-task-evidence",
+                text=context_result,
+                priority=120,
+                required=True,
             )
-        return context_result
+        ]
+        if project_dna:
+            parts.append(ContextPart(id="focused-project-dna", text=project_dna, priority=100, required=True))
+        if decision_memory:
+            parts.append(ContextPart(id="focused-decision-memory", text=decision_memory, priority=80))
+        return ContextBounds.assemble(
+            parts,
+            max_chars=self.settings.supervisor_focused_context_max_chars,
+        ).text
 
     async def _run_focused_agent_step(
         self,
@@ -4680,6 +4714,7 @@ grafiğine dönüştür.
         context = await self._focused_context(
             task,
             target_path=allowed_paths[0],
+            workspace_path=command.workspace_path,
         )
         try:
             recall = await self.improvement.recall(

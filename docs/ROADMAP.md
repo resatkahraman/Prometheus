@@ -18,7 +18,7 @@
 
 ## Phase 2: Context and Safe Patching
 - [x] TASK-050: Project Workspace — completed and validated; final suite 806 passed with 1 existing warning
-- [ ] TASK-051: Context Bounds — next
+- [x] TASK-051: Context Bounds
 - [ ] TASK-052–058: Repository mapping, scope lock and safe/AST-aware/structural patching
 
 ## Phase 3: Supervised Self-Development

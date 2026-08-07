@@ -5,6 +5,7 @@ from app.memory.context_compiler import (
     ContextSegment,
 )
 from app.memory.project import FileMemory, Hypothesis, ProjectMemoryStore
+from app.memory.context_bounds import BoundedContext, ContextBounds, ContextPart
 
 __all__ = [
     "AttentionBroker",
@@ -16,4 +17,7 @@ __all__ = [
     "FileMemory",
     "Hypothesis",
     "ProjectMemoryStore",
+    "BoundedContext",
+    "ContextBounds",
+    "ContextPart",
 ]
