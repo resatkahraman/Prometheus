@@ -14,10 +14,10 @@
 - [x] TASK-046: Project DNA
 - [x] TASK-047: Decision Memory
 - [x] TASK-048: Skill Manifest and Capability Policy
-- [-] TASK-049: Pandora Offline Queue — Deferred
+- [-] TASK-049: Pandora Offline Queue - Deferred
 
 ## Phase 2: Context and Safe Patching
-- [x] TASK-050: Project Workspace — completed and validated; final suite 806 passed with 1 existing warning
+- [x] TASK-050: Project Workspace - completed and validated; final suite 806 passed with 1 existing warning
 - [x] TASK-051: Context Bounds
 - [x] TASK-052: Canonical Repository Map
 - [x] TASK-053: Scope Lock
@@ -25,7 +25,7 @@
 - [x] TASK-055: Canonical Safe Patch Executor
 - [x] TASK-056: Canonical Python Structural Patch Compiler
 - [x] TASK-057: Canonical Python Structural Patch Set Compiler
-- [ ] TASK-058: Safe/AST-aware/structural patch integration
+- [x] TASK-058: Canonical Safe Patch Preview and Approval Binding
 
 ## Phase 3: Supervised Self-Development
-- [ ] TASK-059–074: Supervised self-development and autonomous evolution
+- [ ] TASK-059-074: Supervised self-development and autonomous evolution
