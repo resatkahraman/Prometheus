@@ -28,4 +28,5 @@
 - [x] TASK-058: Canonical Safe Patch Preview and Approval Binding
 
 ## Phase 3: Supervised Self-Development
-- [ ] TASK-059-074: Supervised self-development and autonomous evolution
+- [x] TASK-059: Canonical Self-Development Proposal
+- [ ] TASK-060-074: Supervised self-development and autonomous evolution
