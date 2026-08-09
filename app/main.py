@@ -163,6 +163,9 @@ from app.security.pandora import (
     PANDORA_PROJECT_RUN_PREVIEW_REQUIRED_DETAIL,
     PANDORA_PROJECT_RUN_RATE_LIMIT_DETAIL,
     PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
+    PANDORA_OFFLINE_QUEUE_REVISION,
+    PandoraRequestIdError,
+    PandoraRequestConflictError,
     PANDORA_PAIRING_INVALID_DETAIL,
     PANDORA_PAIRING_LOCAL_ONLY_DETAIL,
     PANDORA_PAIRING_REQUIRED_DETAIL,
@@ -579,6 +582,7 @@ async def pandora_status(request: Request) -> JSONResponse:
             "pandora_voice": "pending",
             "pandora_chat": "ready",
             "pandora_project_run": "ready",
+            "pandora_offline_queue": "ready",
             "authentication": authentication,
             "remote_access": (
                 "enabled"
@@ -675,6 +679,7 @@ async def chat_with_pandora(
 ) -> PandoraChatResponse:
     manager = _pandora_sessions(request.app)
     token = request_pandora_session_token(request)
+    request_id = request.headers.get("X-Pandora-Request-ID")
 
     if request.state.pandora_session is None:
         raise HTTPException(
@@ -683,14 +688,32 @@ async def chat_with_pandora(
         )
 
     try:
+        replay = manager.begin_idempotent(
+            token,
+            operation="chat",
+            request_id=request_id,
+            payload=payload.model_dump(mode="json"),
+        )
+    except PandoraRequestIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PandoraRequestConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if replay is not None:
+        replay["idempotent_replay"] = True
+        response.headers["Cache-Control"] = "no-store"
+        return PandoraChatResponse.model_validate(replay)
+
+    try:
         session = manager.begin_chat_request(token)
     except PandoraChatBusyError as exc:
+        manager.abort_idempotent(token, operation="chat", request_id=request_id)
         raise HTTPException(
             status_code=429,
             detail=PANDORA_CHAT_BUSY_DETAIL,
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
     except PandoraChatRateLimitError as exc:
+        manager.abort_idempotent(token, operation="chat", request_id=request_id)
         raise HTTPException(
             status_code=429,
             detail=PANDORA_CHAT_RATE_LIMIT_DETAIL,
@@ -698,6 +721,7 @@ async def chat_with_pandora(
         ) from exc
 
     if session is None:
+        manager.abort_idempotent(token, operation="chat", request_id=request_id)
         raise HTTPException(
             status_code=401,
             detail=PANDORA_PAIRING_REQUIRED_DETAIL,
@@ -733,14 +757,25 @@ async def chat_with_pandora(
         if not answer:
             raise RuntimeError("Pandora returned an empty answer")
 
+        result = PandoraChatResponse(answer=answer, idempotent_replay=False)
+        canonical = result.model_dump(mode="json", exclude={"idempotent_replay"})
+        if request_id is not None:
+            first_payload = dict(canonical)
+            first_payload["idempotent_replay"] = False
+            manager.finish_idempotent(token, operation="chat", request_id=request_id, response=canonical)
+            response_payload = first_payload
+        else:
+            response_payload = canonical
         response.headers["Cache-Control"] = "no-store"
-        return PandoraChatResponse(answer=answer)
+        return JSONResponse(content=response_payload, headers={"Cache-Control": "no-store"})
     except (ValueError, RuntimeError) as exc:
+        manager.abort_idempotent(token, operation="chat", request_id=request_id)
         raise HTTPException(
             status_code=503,
             detail=PANDORA_CHAT_UNAVAILABLE_DETAIL,
         ) from exc
     except Exception as exc:
+        manager.abort_idempotent(token, operation="chat", request_id=request_id)
         raise HTTPException(
             status_code=500,
             detail=PANDORA_CHAT_UNAVAILABLE_DETAIL,
@@ -804,6 +839,7 @@ async def preview_pandora_project_run(
 ) -> PandoraProjectRunPreviewResponse:
     manager = _pandora_sessions(request.app)
     token = request_pandora_session_token(request)
+    request_id = request.headers.get("X-Pandora-Request-ID")
     if request.state.pandora_session is None:
         raise HTTPException(
             status_code=401,
@@ -811,14 +847,32 @@ async def preview_pandora_project_run(
         )
 
     try:
+        replay = manager.begin_idempotent(
+            token,
+            operation="project_run_preview",
+            request_id=request_id,
+            payload=payload.model_dump(mode="json"),
+        )
+    except PandoraRequestIdError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PandoraRequestConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if replay is not None:
+        replay["idempotent_replay"] = True
+        response.headers["Cache-Control"] = "no-store"
+        return PandoraProjectRunPreviewResponse.model_validate(replay)
+
+    try:
         session = manager.begin_project_run_request(token)
     except PandoraProjectRunBusyError as exc:
+        manager.abort_idempotent(token, operation="project_run_preview", request_id=request_id)
         raise HTTPException(
             status_code=429,
             detail=PANDORA_PROJECT_RUN_BUSY_DETAIL,
             headers={"Retry-After": str(exc.retry_after_seconds)},
         ) from exc
     except PandoraProjectRunRateLimitError as exc:
+        manager.abort_idempotent(token, operation="project_run_preview", request_id=request_id)
         raise HTTPException(
             status_code=429,
             detail=PANDORA_PROJECT_RUN_RATE_LIMIT_DETAIL,
@@ -826,6 +880,7 @@ async def preview_pandora_project_run(
         ) from exc
 
     if session is None:
+        manager.abort_idempotent(token, operation="project_run_preview", request_id=request_id)
         raise HTTPException(
             status_code=401,
             detail=PANDORA_PAIRING_REQUIRED_DETAIL,
@@ -852,7 +907,7 @@ async def preview_pandora_project_run(
             workspace_path=preview.workspace_path,
         )
         response.headers["Cache-Control"] = "no-store"
-        return PandoraProjectRunPreviewResponse(
+        result = PandoraProjectRunPreviewResponse(
             goal=preview.goal,
             workspace_path=preview.workspace_path,
             tasks=[
@@ -870,8 +925,19 @@ async def preview_pandora_project_run(
             side_effect_free=True,
             preview_digest=preview.preview_digest,
             expires_in=manager.project_run_preview_ttl_seconds,
+            idempotent_replay=False,
         )
+        canonical = result.model_dump(mode="json", exclude={"idempotent_replay"})
+        if request_id is not None:
+            first_payload = dict(canonical)
+            first_payload["idempotent_replay"] = False
+            manager.finish_idempotent(token, operation="project_run_preview", request_id=request_id, response=canonical)
+            response_payload = first_payload
+        else:
+            response_payload = canonical
+        return JSONResponse(content=response_payload, headers={"Cache-Control": "no-store"})
     except ValueError as exc:
+        manager.abort_idempotent(token, operation="project_run_preview", request_id=request_id)
         raise HTTPException(
             status_code=422,
             detail=(
@@ -880,6 +946,7 @@ async def preview_pandora_project_run(
             ),
         ) from exc
     except Exception as exc:
+        manager.abort_idempotent(token, operation="project_run_preview", request_id=request_id)
         raise HTTPException(
             status_code=503,
             detail=PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,

@@ -39,6 +39,11 @@ _MISSING = object()
 _REMOTE_TOKEN = "pandora-project-run-token-0123456789ab"
 
 
+def test_project_run_idempotency_is_operation_scoped() -> None:
+    manager = PandoraSessionManager()
+    assert manager.request_fingerprint("project_run_preview", {"goal": "abc"}) != manager.request_fingerprint("chat", {"goal": "abc"})
+
+
 def _basic_header() -> str:
     encoded = base64.b64encode(
         f"prometheus:{_REMOTE_TOKEN}".encode("utf-8")

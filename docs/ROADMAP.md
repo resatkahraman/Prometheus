@@ -14,7 +14,7 @@
 - [x] TASK-046: Project DNA
 - [x] TASK-047: Decision Memory
 - [x] TASK-048: Skill Manifest and Capability Policy
-- [-] TASK-049: Pandora Offline Queue - Deferred
+- [x] TASK-049: Pandora Offline Queue and Idempotent Reconnect
 
 ## Phase 2: Context and Safe Patching
 - [x] TASK-050: Project Workspace - completed and validated; final suite 806 passed with 1 existing warning

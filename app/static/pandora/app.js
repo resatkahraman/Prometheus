@@ -10,6 +10,11 @@
   const PROJECT_RUN_GOAL_MAX_CHARS = 2000;
   const PROJECT_RUN_REQUEST_TIMEOUT_MS = 60000;
   const PROJECT_RUN_REFRESH_MS = 5000;
+  const PANDORA_OUTBOX_KEY = "prometheus.pandora.outbox.v1";
+  const OUTBOX_MAX_ITEMS = 20;
+  const OUTBOX_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+  const OUTBOX_MAX_BYTES = 32 * 1024;
+  const OUTBOX_KINDS = new Set(["chat", "project_run_preview"]);
 
   async function prometheusFetch(resource, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
@@ -31,6 +36,42 @@
     } catch (_error) {
       return {};
     }
+  }
+
+  function readOutbox() {
+    try {
+      const raw = localStorage.getItem(PANDORA_OUTBOX_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const now = Date.now();
+      const valid = parsed.filter((item) => {
+        if (!item || item.version !== 1 || !OUTBOX_KINDS.has(item.kind) || typeof item.request_id !== "string"
+          || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(item.request_id)
+          || item.payload === null || typeof item.payload !== "object" || !Number.isFinite(item.created_at_ms)
+          || now - item.created_at_ms > OUTBOX_MAX_AGE_MS) return false;
+        if (item.kind === "chat") {
+          return Object.keys(item.payload).sort().join(",") === "history,message"
+            && typeof item.payload.message === "string" && item.payload.message.length <= CHAT_MESSAGE_MAX_CHARS
+            && Array.isArray(item.payload.history) && item.payload.history.length <= CHAT_HISTORY_MAX_MESSAGES
+            && item.payload.history.every((entry, index) => entry && entry.role === (index % 2 === 0 ? "user" : "assistant") && typeof entry.content === "string" && entry.content.length <= CHAT_MESSAGE_MAX_CHARS);
+        }
+        return Object.keys(item.payload).sort().join(",") === "goal,workspace_path"
+          && typeof item.payload.goal === "string" && item.payload.goal.length >= 3 && item.payload.goal.length <= PROJECT_RUN_GOAL_MAX_CHARS
+          && typeof item.payload.workspace_path === "string" && item.payload.workspace_path.length > 0;
+      });
+      if (valid.length !== parsed.length) localStorage.setItem(PANDORA_OUTBOX_KEY, JSON.stringify(valid));
+      return valid;
+    } catch (_error) {
+      try { localStorage.removeItem(PANDORA_OUTBOX_KEY); } catch (_ignored) {}
+      return [];
+    }
+  }
+
+  function writeOutbox(items) {
+    const raw = JSON.stringify(items);
+    if (raw.length > OUTBOX_MAX_BYTES) throw new Error("Bekleyen istek kuyruğu sınırını aşıyor.");
+    localStorage.setItem(PANDORA_OUTBOX_KEY, raw);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
@@ -77,6 +118,10 @@
     const projectRunStatusTasks = document.getElementById("project-run-status-tasks");
     const navChat = document.getElementById("nav-chat");
     const navProjectRun = document.getElementById("nav-project-run");
+    const outbox = document.getElementById("pandora-outbox");
+    const outboxCount = document.getElementById("pandora-outbox-count");
+    const outboxStatus = document.getElementById("pandora-outbox-status");
+    const outboxClear = document.getElementById("pandora-outbox-clear");
 
     let refreshing = false;
     let sending = false;
@@ -93,6 +138,25 @@
     let currentPreview = null;
     let activeProjectRunId = null;
     let activeProjectRunTerminal = false;
+    let outboxBlocked = false;
+    let flushingOutbox = false;
+
+    const outboxItems = () => readOutbox();
+    const renderOutbox = (message = "") => {
+      const items = outboxItems();
+      if (outbox) outbox.hidden = items.length === 0 && !outboxBlocked;
+      if (outboxCount) outboxCount.textContent = String(items.length);
+      if (outboxStatus) outboxStatus.textContent = message || (outboxBlocked ? "Bir istek engellendi; açıkça temizleyebilir veya yeniden deneyebilirsin." : items.length ? "Güvenli bağlantı bekleniyor." : "");
+    };
+    const enqueueOutbox = (kind, payload) => {
+      if (!OUTBOX_KINDS.has(kind) || !globalThis.crypto || typeof globalThis.crypto.randomUUID !== "function") throw new Error("Bu istek çevrimdışı kuyruğa alınamadı.");
+      const items = outboxItems();
+      if (items.length >= OUTBOX_MAX_ITEMS) throw new Error("Bekleyen istek kuyruğu dolu.");
+      const item = { version: 1, request_id: globalThis.crypto.randomUUID(), kind, payload, created_at_ms: Date.now() };
+      writeOutbox([...items, item]);
+      renderOutbox();
+      return item;
+    };
 
     const setStatus = (message, state = "checking") => {
       if (statusNode) statusNode.textContent = message;
@@ -145,11 +209,13 @@
       }
     };
 
-    const appendChatMessage = (role, content) => {
+    const appendChatMessage = (role, content, pending = false, requestId = "") => {
       if (!chatMessages) return;
       const article = document.createElement("article");
       article.className = "chat-message";
       article.dataset.role = role;
+      if (pending) article.dataset.pending = "true";
+      if (requestId) article.dataset.requestId = requestId;
       const paragraph = document.createElement("p");
       paragraph.textContent = content;
       article.appendChild(paragraph);
@@ -165,7 +231,7 @@
         empty.textContent = "Pandora hazır. İlk mesajını yazarak güvenli metin sohbetini başlat.";
         chatMessages.appendChild(empty);
       } else {
-        for (const item of conversation) appendChatMessage(item.role, item.content);
+        for (const item of conversation) appendChatMessage(item.role, item.content, Boolean(item.pending), item.request_id || "");
       }
       window.requestAnimationFrame(() => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -185,7 +251,7 @@
     };
 
     const updateControls = () => {
-      const unavailable = !authenticated || !navigator.onLine;
+      const unavailable = !authenticated;
       if (chatInput) chatInput.disabled = unavailable || sending;
       if (chatSubmit) chatSubmit.disabled = unavailable || sending;
       if (navProjectRun) navProjectRun.disabled = !authenticated;
@@ -271,6 +337,7 @@
         clearProjectRunState();
       }
       authenticated = nextAuthenticated;
+      if (authenticated) flushOutbox();
       if (welcomeCard) welcomeCard.hidden = authenticated;
       showView(activeView);
       updateControls();
@@ -297,6 +364,29 @@
       }
       setStatus("Cihaz eşleştirmesi gerekli", "attention");
       if (pairingForm) pairingForm.hidden = false;
+    };
+
+    const flushOutbox = async () => {
+      if (flushingOutbox || !authenticated || !navigator.onLine || document.visibilityState !== "visible") return;
+      flushingOutbox = true;
+      try {
+        let items = outboxItems().sort((a, b) => a.created_at_ms - b.created_at_ms || a.request_id.localeCompare(b.request_id));
+        while (items.length && authenticated && navigator.onLine) {
+          const item = items[0];
+          const endpoint = item.kind === "chat" ? "/v1/pandora/chat" : "/v1/pandora/project-run/preview";
+          const response = await prometheusFetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", "X-Pandora-Request-ID": item.request_id }, body: JSON.stringify(item.payload) });
+          const payload = await responsePayload(response);
+          if (response.status === 401 || response.status === 403) { renderOutbox("Pandora oturumunu yeniden eşleştirmen gerekiyor."); await expireSession("Pandora oturumu sona erdi. Kuyruk korunuyor."); break; }
+          if (response.status === 409) { outboxBlocked = true; renderOutbox(payload.detail || "Bekleyen istek sunucu tarafından engellendi."); break; }
+          if (!response.ok) break;
+          if (item.kind === "chat") {
+            const answer = String(payload.answer || "").trim();
+            if (answer) { conversation = conversation.map((entry) => entry.request_id === item.request_id ? { role: "user", content: entry.content, pending: false } : entry); conversation.push({ role: "assistant", content: answer }); renderConversation(); }
+          } else renderProjectRunPreview(payload);
+          items = items.slice(1); writeOutbox(items); renderOutbox();
+        }
+      } catch (_error) { renderOutbox("Bağlantı yeniden kurulunca bekleyen istekler gönderilecek."); }
+      finally { flushingOutbox = false; renderOutbox(); }
     };
 
     const refreshStatus = async () => {
@@ -409,6 +499,17 @@
         content: item.content,
       }));
       const previousLength = conversation.length;
+      if (!navigator.onLine) {
+        try {
+          const queued = enqueueOutbox("chat", { message, history });
+          conversation.push({ role: "user", content: message, pending: true, request_id: queued.request_id });
+          chatInput.value = ""; updateChatCounter(); renderConversation();
+          if (chatFeedback) chatFeedback.textContent = "Çevrimdışı: güvenli bağlantı kurulunca gönderilecek.";
+        } catch (error) { if (chatFeedback) chatFeedback.textContent = error instanceof Error ? error.message : "Mesaj kuyruğa alınamadı."; }
+        return;
+      }
+      const requestId = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function" ? globalThis.crypto.randomUUID() : "";
+      if (!requestId) { if (chatFeedback) chatFeedback.textContent = "Güvenli istek kimliği oluşturulamadı."; return; }
       conversation.push({ role: "user", content: message });
       chatInput.value = "";
       updateChatCounter();
@@ -421,7 +522,7 @@
       try {
         const response = await prometheusFetch("/v1/pandora/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Pandora-Request-ID": requestId },
           body: JSON.stringify({ message, history }),
           signal: controller.signal,
         });
@@ -565,6 +666,15 @@
         if (projectRunFeedback) projectRunFeedback.textContent = "Görev açıklaması 2000 karakteri aşamaz.";
         return;
       }
+      if (!navigator.onLine) {
+        try {
+          enqueueOutbox("project_run_preview", { goal, workspace_path: workspacePath });
+          if (projectRunFeedback) projectRunFeedback.textContent = "Çevrimdışı: Project Run önizlemesi yeniden bağlantıda gönderilecek.";
+        } catch (error) { if (projectRunFeedback) projectRunFeedback.textContent = error instanceof Error ? error.message : "Önizleme kuyruğa alınamadı."; }
+        return;
+      }
+      const requestId = globalThis.crypto && typeof globalThis.crypto.randomUUID === "function" ? globalThis.crypto.randomUUID() : "";
+      if (!requestId) { if (projectRunFeedback) projectRunFeedback.textContent = "Güvenli istek kimliği oluşturulamadı."; return; }
       previewing = true;
       currentPreview = null;
       if (projectRunPreview) projectRunPreview.hidden = true;
@@ -575,7 +685,7 @@
       try {
         const response = await prometheusFetch("/v1/pandora/project-run/preview", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "X-Pandora-Request-ID": requestId },
           body: JSON.stringify({ goal, workspace_path: workspacePath }),
           signal: controller.signal,
         });
@@ -721,6 +831,9 @@
       if (!logoutButton) return;
       logoutButton.disabled = true;
       try {
+        localStorage.removeItem(PANDORA_OUTBOX_KEY);
+        outboxBlocked = false;
+        renderOutbox();
         const response = await prometheusFetch("/v1/pandora/logout", { method: "POST" });
         if (!response.ok) {
           const payload = await responsePayload(response);
@@ -758,6 +871,7 @@
     if (projectRunCommitButton) projectRunCommitButton.addEventListener("click", commitProjectRun);
     if (projectRunRefreshButton) projectRunRefreshButton.addEventListener("click", refreshProjectRunStatus);
     if (logoutButton) logoutButton.addEventListener("click", logoutPandora);
+    if (outboxClear) outboxClear.addEventListener("click", () => { try { localStorage.removeItem(PANDORA_OUTBOX_KEY); } catch (_error) {} outboxBlocked = false; renderOutbox(); });
     if (navChat) navChat.addEventListener("click", () => showView("chat"));
     if (navProjectRun) navProjectRun.addEventListener("click", () => showView("project-run"));
 
@@ -767,6 +881,7 @@
 
     window.addEventListener("online", () => {
       refreshStatus();
+      flushOutbox();
       if (activeView === "project-run") loadProjects();
     });
     window.addEventListener("offline", () => {
@@ -777,6 +892,7 @@
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
         refreshStatus();
+        flushOutbox();
         if (activeView === "project-run" && activeProjectRunId) refreshProjectRunStatus();
       } else {
         stopProjectRefresh();
@@ -787,6 +903,7 @@
     updateChatCounter();
     updateProjectRunCounter();
     updateControls();
+    renderOutbox();
     refreshStatus();
   });
 })();

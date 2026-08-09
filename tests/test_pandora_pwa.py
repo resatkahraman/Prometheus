@@ -74,7 +74,7 @@ async def test_service_worker_has_root_scope_and_safe_cache_rules() -> None:
     assert response.status_code == 200
     assert response.headers["service-worker-allowed"] == "/"
     source = response.text
-    assert 'const CACHE_NAME = "pandora-shell-v4"' in source
+    assert 'const CACHE_NAME = "pandora-shell-v5"' in source
     assert 'startsWith("/v1/")' in source
     assert 'request.method !== "GET"' in source
     assert 'request.headers.has("Authorization")' in source
@@ -92,6 +92,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "pandora_voice",
         "pandora_chat",
         "pandora_project_run",
+        "pandora_offline_queue",
         "authentication",
         "remote_access",
         "pairing_code_allowed",
@@ -102,6 +103,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "pandora_voice": "pending",
         "pandora_chat": "ready",
         "pandora_project_run": "ready",
+        "pandora_offline_queue": "ready",
         "authentication": "prometheus",
         "remote_access": "disabled",
         "pairing_code_allowed": False,
@@ -115,8 +117,13 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
 def test_pandora_javascript_uses_safe_browser_primitives() -> None:
     source = (STATIC_ROOT / "app.js").read_text("utf-8")
 
-    for forbidden in ("innerHTML", "localStorage", "sessionStorage", "setInterval"):
+    for forbidden in ("innerHTML", "sessionStorage", "setInterval", "Background Sync", "indexedDB", "Authorization"):
         assert forbidden not in source
+    assert 'const PANDORA_OUTBOX_KEY = "prometheus.pandora.outbox.v1"' in source
+    assert "crypto.randomUUID" in source
+    assert "OUTBOX_MAX_ITEMS = 20" in source
+    assert "OUTBOX_MAX_BYTES = 32 * 1024" in source
+    assert "pandora-outbox-count" in (PROJECT_ROOT / "app" / "pandora_ui.py").read_text("utf-8")
     assert "textContent" in source
     assert 'const PROMETHEUS_CSRF_HEADER = "X-Prometheus-CSRF"' in source
     assert 'const PROMETHEUS_CSRF_VALUE = "1"' in source

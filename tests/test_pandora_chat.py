@@ -23,12 +23,22 @@ from app.security.pandora import (
     PANDORA_PAIRING_REQUIRED_DETAIL,
     PandoraChatBusyError,
     PandoraChatRateLimitError,
+    PandoraRequestIdError,
     PandoraSessionManager,
 )
 
 
 _MISSING = object()
 _REMOTE_TOKEN = "pandora-chat-remote-token-0123456789ab"
+
+
+def test_pandora_request_id_validation_and_fingerprint() -> None:
+    manager = PandoraSessionManager()
+    request_id = "00000000-0000-4000-8000-000000000001"
+    assert manager.validate_request_id(request_id) == request_id
+    assert manager.request_fingerprint("chat", {"message": "x"}).startswith("sha256:")
+    with pytest.raises(PandoraRequestIdError):
+        manager.validate_request_id("not-a-uuid")
 
 
 def _basic_header() -> str:

@@ -32,6 +32,15 @@ PANDORA_UI = """<!doctype html>
         </div>
       </section>
 
+      <section id="pandora-outbox" class="outbox-card" hidden aria-live="polite">
+        <div>
+          <strong>Bekleyen güvenli istekler</strong>
+          <span id="pandora-outbox-count">0</span>
+        </div>
+        <p id="pandora-outbox-status" class="support-note"></p>
+        <button id="pandora-outbox-clear" class="secondary-action compact-action" type="button">Bekleyenleri temizle</button>
+      </section>
+
       <section id="pairing-card" class="pairing-card" aria-labelledby="pairing-title" hidden>
         <p class="eyebrow">Güvenli cihaz bağlantısı</p>
         <h2 id="pairing-title">Pandora eşleştirme</h2>

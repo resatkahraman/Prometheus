@@ -4,6 +4,8 @@ import hashlib
 import math
 import secrets
 import time
+import json
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from threading import RLock
@@ -35,6 +37,9 @@ PANDORA_PROJECT_RUN_PREVIEW_TTL_SECONDS = 10 * 60
 PANDORA_PROJECT_RUN_MAX_TASKS = 24
 PANDORA_PROJECT_RUN_MAX_FILES = 200
 PANDORA_PROJECT_LIST_LIMIT = 50
+PANDORA_OFFLINE_QUEUE_REVISION = "pandora-offline-queue-v1"
+PANDORA_REPLAY_MAX_PER_SESSION = 64
+PANDORA_REPLAY_TTL_SECONDS = 24 * 60 * 60
 
 PANDORA_PAIRING_REQUIRED_DETAIL = "Pandora eşleştirmesi gerekli."
 PANDORA_PAIRING_INVALID_DETAIL = (
@@ -139,6 +144,7 @@ class PandoraChatRequest(BaseModel):
 
 class PandoraChatResponse(BaseModel):
     answer: str
+    idempotent_replay: bool = False
 
 
 class PandoraProjectSummary(BaseModel):
@@ -197,6 +203,7 @@ class PandoraProjectRunPreviewResponse(BaseModel):
     side_effect_free: bool = True
     preview_digest: str
     expires_in: int
+    idempotent_replay: bool = False
 
 
 class PandoraProjectRunCommitRequest(PandoraProjectRunPreviewRequest):
@@ -268,6 +275,14 @@ class PandoraProjectRunRateLimitError(RuntimeError):
         self.retry_after_seconds = retry_after_seconds
 
 
+class PandoraRequestIdError(ValueError):
+    pass
+
+
+class PandoraRequestConflictError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class PandoraSessionInfo:
     device_name: str
@@ -299,6 +314,14 @@ class _PandoraProjectRunState:
     command_ids: list[str] = field(default_factory=list)
 
 
+@dataclass
+class _PandoraReplayRecord:
+    fingerprint: str
+    created_at: float
+    in_flight: bool = True
+    response: dict[str, object] | None = None
+
+
 class PandoraSessionManager:
     def __init__(
         self,
@@ -328,6 +351,7 @@ class PandoraSessionManager:
         self._sessions: dict[bytes, PandoraSessionInfo] = {}
         self._chat_states: dict[bytes, _PandoraChatState] = {}
         self._project_run_states: dict[bytes, _PandoraProjectRunState] = {}
+        self._replay_states: dict[bytes, dict[tuple[str, str], _PandoraReplayRecord]] = {}
         self._lock = RLock()
 
     @property
@@ -370,6 +394,7 @@ class PandoraSessionManager:
             self._sessions.pop(digest, None)
             self._chat_states.pop(digest, None)
             self._project_run_states.pop(digest, None)
+            self._replay_states.pop(digest, None)
 
         for state in self._project_run_states.values():
             if state.preview_digest and state.preview_expires_at <= now:
@@ -377,6 +402,14 @@ class PandoraSessionManager:
                 state.preview_goal = None
                 state.preview_workspace_path = None
                 state.preview_expires_at = 0.0
+
+        for records in self._replay_states.values():
+            expired_records = [
+                key for key, record in records.items()
+                if record.created_at + PANDORA_REPLAY_TTL_SECONDS <= now
+            ]
+            for key in expired_records:
+                records.pop(key, None)
 
     def issue_pairing_code(self) -> str:
         code = f"{secrets.randbelow(1_000_000):06d}"
@@ -427,7 +460,77 @@ class PandoraSessionManager:
             )
             self._chat_states[token_digest] = _PandoraChatState()
             self._project_run_states[token_digest] = _PandoraProjectRunState()
+            self._replay_states[token_digest] = {}
             return token
+
+    @staticmethod
+    def validate_request_id(value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or len(value) > 80:
+            raise PandoraRequestIdError("Pandora request identifier is invalid.")
+        try:
+            parsed = uuid.UUID(value)
+        except (ValueError, AttributeError):
+            raise PandoraRequestIdError("Pandora request identifier is invalid.") from None
+        if str(parsed) != value:
+            raise PandoraRequestIdError("Pandora request identifier is invalid.")
+        return value
+
+    @staticmethod
+    def request_fingerprint(operation: str, payload: dict[str, object]) -> str:
+        raw = json.dumps({"operation": operation, "payload": payload}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+    def begin_idempotent(self, token: str | None, *, operation: str, request_id: str | None, payload: dict[str, object]) -> dict[str, object] | None:
+        request_id = self.validate_request_id(request_id)
+        if request_id is None or not token:
+            return None
+        digest = self._digest(token)
+        now = self._clock()
+        fingerprint = self.request_fingerprint(operation, payload)
+        with self._lock:
+            self._cleanup_locked(now)
+            if digest not in self._sessions:
+                return None
+            records = self._replay_states.setdefault(digest, {})
+            stale = [key for key, record in records.items() if record.created_at + PANDORA_REPLAY_TTL_SECONDS <= now]
+            for key in stale:
+                records.pop(key, None)
+            key = (operation, request_id)
+            record = records.get(key)
+            if record is not None:
+                if record.fingerprint != fingerprint:
+                    raise PandoraRequestConflictError("Pandora request identifier was already used for different input.")
+                if record.in_flight:
+                    raise PandoraRequestConflictError("Pandora request is already in progress.")
+                return dict(record.response or {})
+            if len(records) >= PANDORA_REPLAY_MAX_PER_SESSION:
+                oldest = min(records, key=lambda item: records[item].created_at)
+                records.pop(oldest, None)
+            records[key] = _PandoraReplayRecord(fingerprint=fingerprint, created_at=now)
+            return None
+
+    def finish_idempotent(self, token: str | None, *, operation: str, request_id: str | None, response: dict[str, object]) -> None:
+        request_id = self.validate_request_id(request_id)
+        if request_id is None or not token:
+            return
+        digest = self._digest(token)
+        with self._lock:
+            record = self._replay_states.get(digest, {}).get((operation, request_id))
+            if record is not None:
+                record.response = dict(response)
+                record.in_flight = False
+
+    def abort_idempotent(self, token: str | None, *, operation: str, request_id: str | None) -> None:
+        request_id = self.validate_request_id(request_id)
+        if request_id is None or not token:
+            return
+        digest = self._digest(token)
+        with self._lock:
+            records = self._replay_states.get(digest)
+            if records is not None:
+                records.pop((operation, request_id), None)
 
     def session_for_token(self, token: str | None) -> PandoraSessionInfo | None:
         if not token:
