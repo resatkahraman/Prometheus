@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import math
 import secrets
 import time
@@ -38,6 +40,7 @@ PANDORA_PROJECT_RUN_MAX_TASKS = 24
 PANDORA_PROJECT_RUN_MAX_FILES = 200
 PANDORA_PROJECT_LIST_LIMIT = 50
 PANDORA_OFFLINE_QUEUE_REVISION = "pandora-offline-queue-v1"
+PANDORA_MISSION_CONTROL_REVISION = "pandora-mobile-mission-control-v1"
 PANDORA_REPLAY_MAX_PER_SESSION = 64
 PANDORA_REPLAY_TTL_SECONDS = 24 * 60 * 60
 
@@ -283,6 +286,10 @@ class PandoraRequestConflictError(RuntimeError):
     pass
 
 
+class PandoraMobileControlBusyError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class PandoraSessionInfo:
     device_name: str
@@ -312,6 +319,7 @@ class _PandoraProjectRunState:
     preview_workspace_path: str | None = None
     preview_expires_at: float = 0.0
     command_ids: list[str] = field(default_factory=list)
+    mobile_control_in_flight: bool = False
 
 
 @dataclass
@@ -352,6 +360,7 @@ class PandoraSessionManager:
         self._chat_states: dict[bytes, _PandoraChatState] = {}
         self._project_run_states: dict[bytes, _PandoraProjectRunState] = {}
         self._replay_states: dict[bytes, dict[tuple[str, str], _PandoraReplayRecord]] = {}
+        self._mobile_control_secret = secrets.token_bytes(32)
         self._lock = RLock()
 
     @property
@@ -531,6 +540,54 @@ class PandoraSessionManager:
             records = self._replay_states.get(digest)
             if records is not None:
                 records.pop((operation, request_id), None)
+
+    def mobile_approval_token(self, token: str | None, *, command_id: str, approval_id: str, approval_version: int) -> str | None:
+        if not token or not command_id or not approval_id or approval_version < 1:
+            return None
+        digest = self._digest(token)
+        now = self._clock()
+        with self._lock:
+            self._cleanup_locked(now)
+            if digest not in self._sessions or command_id not in self._project_run_states.get(digest, _PandoraProjectRunState()).command_ids:
+                return None
+        material = json.dumps([PANDORA_MISSION_CONTROL_REVISION, digest.hex(), command_id, approval_id, approval_version], separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return "pmc1_" + hmac.new(self._mobile_control_secret, material, hashlib.sha256).hexdigest()
+
+    def mobile_approval_token_is_valid(self, token: str | None, *, command_id: str, approval_id: str, approval_version: int, control_token: str) -> bool:
+        if not token or not command_id or not approval_id or approval_version < 1 or not isinstance(control_token, str) or len(control_token) != 69 or not control_token.startswith("pmc1_"):
+            return False
+        digest = self._digest(token)
+        now = self._clock()
+        with self._lock:
+            self._cleanup_locked(now)
+            if digest not in self._sessions or command_id not in self._project_run_states.get(digest, _PandoraProjectRunState()).command_ids:
+                return False
+        material = json.dumps([PANDORA_MISSION_CONTROL_REVISION, digest.hex(), command_id, approval_id, approval_version], separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        expected = "pmc1_" + hmac.new(self._mobile_control_secret, material, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, control_token)
+
+    def begin_mobile_control(self, token: str | None, command_id: str) -> bool:
+        if not token or not command_id:
+            return False
+        digest = self._digest(token)
+        with self._lock:
+            self._cleanup_locked(self._clock())
+            state = self._project_run_states.get(digest)
+            if digest not in self._sessions or state is None or command_id not in state.command_ids:
+                return False
+            if state.mobile_control_in_flight:
+                raise PandoraMobileControlBusyError("Pandora Mission Control işlemi zaten sürüyor.")
+            state.mobile_control_in_flight = True
+            return True
+
+    def end_mobile_control(self, token: str | None, command_id: str) -> None:
+        if not token:
+            return
+        digest = self._digest(token)
+        with self._lock:
+            state = self._project_run_states.get(digest)
+            if state is not None and command_id in state.command_ids:
+                state.mobile_control_in_flight = False
 
     def session_for_token(self, token: str | None) -> PandoraSessionInfo | None:
         if not token:

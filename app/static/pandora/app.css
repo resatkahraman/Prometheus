@@ -114,6 +114,9 @@ main { display: grid; gap: 1rem; }
 .chat-message[data-role="assistant"] p { border: 1px solid #303347; border-bottom-left-radius: .3rem; background: #171924; color: #e7e9f4; }
 .chat-message[data-pending="true"] { opacity: .72; }
 .chat-message[data-pending="true"] p { border-style: dashed; }
+.mission-control-card { display: grid; gap: 1rem; }
+.mission-control-card[hidden] { display: none; }
+.mission-control-card .run-panel { padding: 1rem; }
 .chat-composer { display: grid; gap: .6rem; padding: .9rem 1rem 1rem; border-top: 1px solid #25283a; background: rgba(12, 14, 22, .94); }
 .chat-composer textarea { min-height: 4.5rem; max-height: 12rem; resize: vertical; line-height: 1.45; }
 .chat-composer textarea:disabled { opacity: .62; }

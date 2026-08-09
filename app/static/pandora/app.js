@@ -118,6 +118,20 @@
     const projectRunStatusTasks = document.getElementById("project-run-status-tasks");
     const navChat = document.getElementById("nav-chat");
     const navProjectRun = document.getElementById("nav-project-run");
+    const navMissionControl = document.getElementById("nav-mission-control");
+    const missionControlCard = document.getElementById("mission-control-card");
+    const missionControlRefresh = document.getElementById("mission-control-refresh");
+    const missionControlStatus = document.getElementById("mission-control-status");
+    const missionControlProgress = document.getElementById("mission-control-progress");
+    const missionControlTasks = document.getElementById("mission-control-tasks");
+    const missionControlApproval = document.getElementById("mission-control-approval");
+    const missionControlApprovalTitle = document.getElementById("mission-control-approval-title");
+    const missionControlApprovalFiles = document.getElementById("mission-control-approval-files");
+    const missionControlApprove = document.getElementById("mission-control-approve");
+    const missionControlReject = document.getElementById("mission-control-reject");
+    const missionControlPause = document.getElementById("mission-control-pause");
+    const missionControlResume = document.getElementById("mission-control-resume");
+    const missionControlFeedback = document.getElementById("mission-control-feedback");
     const outbox = document.getElementById("pandora-outbox");
     const outboxCount = document.getElementById("pandora-outbox-count");
     const outboxStatus = document.getElementById("pandora-outbox-status");
@@ -140,6 +154,9 @@
     let activeProjectRunTerminal = false;
     let outboxBlocked = false;
     let flushingOutbox = false;
+    let missionControl = null;
+    let missionApprovalToken = null;
+    let missionControlBusy = false;
 
     const outboxItems = () => readOutbox();
     const renderOutbox = (message = "") => {
@@ -255,11 +272,18 @@
       if (chatInput) chatInput.disabled = unavailable || sending;
       if (chatSubmit) chatSubmit.disabled = unavailable || sending;
       if (navProjectRun) navProjectRun.disabled = !authenticated;
+      if (navMissionControl) navMissionControl.disabled = !authenticated;
       if (projectRunWorkspace) projectRunWorkspace.disabled = unavailable || previewing || committing;
       if (projectRunGoal) projectRunGoal.disabled = unavailable || previewing || committing;
       if (projectRunPreviewButton) projectRunPreviewButton.disabled = unavailable || previewing || committing;
       if (projectRunCommitButton) projectRunCommitButton.disabled = unavailable || previewing || committing || !currentPreview;
       if (projectRunRefreshButton) projectRunRefreshButton.disabled = unavailable || projectStatusRefreshing || !activeProjectRunId;
+      const missionOffline = unavailable || !navigator.onLine || missionControlBusy;
+      if (missionControlRefresh) missionControlRefresh.disabled = !authenticated || missionControlBusy;
+      if (missionControlApprove) missionControlApprove.disabled = missionOffline || !missionApprovalToken;
+      if (missionControlReject) missionControlReject.disabled = missionOffline || !missionApprovalToken;
+      if (missionControlPause) missionControlPause.disabled = missionOffline || !(missionControl && missionControl.mission && missionControl.mission.can_pause);
+      if (missionControlResume) missionControlResume.disabled = missionOffline || !(missionControl && missionControl.mission && missionControl.mission.can_resume);
     };
 
     const clearConversation = () => {
@@ -295,9 +319,10 @@
     };
 
     const showView = (view) => {
-      activeView = view === "project-run" ? "project-run" : "chat";
+      activeView = view === "project-run" ? "project-run" : view === "mission-control" ? "mission-control" : "chat";
       if (chatCard) chatCard.hidden = !authenticated || activeView !== "chat";
       if (projectRunCard) projectRunCard.hidden = !authenticated || activeView !== "project-run";
+      if (missionControlCard) missionControlCard.hidden = !authenticated || activeView !== "mission-control";
       if (navChat) {
         navChat.classList.toggle("active", activeView === "chat");
         navChat.toggleAttribute("aria-current", activeView === "chat");
@@ -306,9 +331,15 @@
         navProjectRun.classList.toggle("active", activeView === "project-run");
         navProjectRun.toggleAttribute("aria-current", activeView === "project-run");
       }
+      if (navMissionControl) {
+        navMissionControl.classList.toggle("active", activeView === "mission-control");
+        navMissionControl.toggleAttribute("aria-current", activeView === "mission-control");
+      }
       if (activeView === "project-run" && authenticated) {
         loadProjects();
         if (activeProjectRunId) refreshProjectRunStatus();
+      } else if (activeView === "mission-control" && authenticated) {
+        refreshMissionControl();
       } else {
         stopProjectRefresh();
       }
@@ -364,6 +395,46 @@
       }
       setStatus("Cihaz eşleştirmesi gerekli", "attention");
       if (pairingForm) pairingForm.hidden = false;
+    };
+
+    const renderMissionControl = (payload) => {
+      missionControl = payload;
+      missionApprovalToken = payload.approval && payload.approval.available ? String(payload.approval.control_token || "") : null;
+      if (missionControlStatus) missionControlStatus.textContent = `${String(payload.status || "")} · ${Number(payload.completed_tasks || 0)}/${Number(payload.total_tasks || 0)} tamamlandı${payload.terminal ? " · terminal" : ""}`;
+      if (missionControlProgress) missionControlProgress.style.width = `${Math.max(0, Math.min(100, Number(payload.progress_percent || 0)))}%`;
+      if (missionControlTasks) { clearNode(missionControlTasks); for (const task of Array.isArray(payload.tasks) ? payload.tasks : []) missionControlTasks.appendChild(createTaskNode(task, true)); }
+      if (missionControlApproval) missionControlApproval.hidden = !payload.approval;
+      if (payload.approval) {
+        if (missionControlApprovalTitle) missionControlApprovalTitle.textContent = String(payload.approval.task_title || "Onay bekleyen görev");
+        if (missionControlApprovalFiles) { clearNode(missionControlApprovalFiles); for (const file of payload.approval.exact_files || []) { const li = document.createElement("li"); li.textContent = String(file); missionControlApprovalFiles.appendChild(li); } }
+      }
+      updateControls();
+    };
+
+    const refreshMissionControl = async () => {
+      if (!authenticated || !activeProjectRunId || missionControlBusy) return;
+      try {
+        const response = await prometheusFetch(`/v1/pandora/project-run/${encodeURIComponent(activeProjectRunId)}/mission-control`);
+        const payload = await responsePayload(response);
+        if (response.status === 401) { missionApprovalToken = null; await expireSession("Pandora oturumu sona erdi."); return; }
+        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+        renderMissionControl(payload);
+      } catch (error) { if (missionControlFeedback) missionControlFeedback.textContent = error instanceof Error ? error.message : "Mission Control yenilenemedi."; }
+    };
+
+    const missionMutation = async (path, body = null, confirmText = "") => {
+      if (!authenticated || !navigator.onLine || missionControlBusy) return;
+      if (confirmText && !window.confirm(confirmText)) return;
+      missionControlBusy = true; missionApprovalToken = null; updateControls();
+      try {
+        const options = { method: "POST" };
+        if (body) { options.headers = { "Content-Type": "application/json" }; options.body = JSON.stringify(body); }
+        const response = await prometheusFetch(`/v1/pandora/project-run/${encodeURIComponent(activeProjectRunId)}${path}`, options);
+        const payload = await responsePayload(response);
+        if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+        renderMissionControl(payload);
+      } catch (_error) { missionApprovalToken = null; if (missionControlFeedback) missionControlFeedback.textContent = "Mission state uncertain. Refresh Mission Control."; }
+      finally { missionControlBusy = false; updateControls(); }
     };
 
     const flushOutbox = async () => {
@@ -874,6 +945,12 @@
     if (outboxClear) outboxClear.addEventListener("click", () => { try { localStorage.removeItem(PANDORA_OUTBOX_KEY); } catch (_error) {} outboxBlocked = false; renderOutbox(); });
     if (navChat) navChat.addEventListener("click", () => showView("chat"));
     if (navProjectRun) navProjectRun.addEventListener("click", () => showView("project-run"));
+    if (navMissionControl) navMissionControl.addEventListener("click", () => showView("mission-control"));
+    if (missionControlRefresh) missionControlRefresh.addEventListener("click", refreshMissionControl);
+    if (missionControlApprove) missionControlApprove.addEventListener("click", () => missionMutation("/approval", { decision: "approve", control_token: missionApprovalToken }));
+    if (missionControlReject) missionControlReject.addEventListener("click", () => missionMutation("/approval", { decision: "reject", control_token: missionApprovalToken }, `"${missionControl && missionControl.approval ? missionControl.approval.task_title : "Bu görev"}" reddedilsin mi?`));
+    if (missionControlPause) missionControlPause.addEventListener("click", () => missionMutation("/pause"));
+    if (missionControlResume) missionControlResume.addEventListener("click", () => missionMutation("/resume"));
 
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/pandora-sw.js", { scope: "/" }).catch(() => {});
@@ -888,12 +965,14 @@
       stopProjectRefresh();
       setStatus("Cihaz çevrimdışı", "offline");
       updateControls();
+      if (missionControlFeedback) missionControlFeedback.textContent = "Çevrimdışı: Mission Control işlemleri devre dışı.";
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
         refreshStatus();
         flushOutbox();
         if (activeView === "project-run" && activeProjectRunId) refreshProjectRunStatus();
+        if (activeView === "mission-control") refreshMissionControl();
       } else {
         stopProjectRefresh();
       }

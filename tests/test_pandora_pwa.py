@@ -74,7 +74,7 @@ async def test_service_worker_has_root_scope_and_safe_cache_rules() -> None:
     assert response.status_code == 200
     assert response.headers["service-worker-allowed"] == "/"
     source = response.text
-    assert 'const CACHE_NAME = "pandora-shell-v5"' in source
+    assert 'const CACHE_NAME = "pandora-shell-v6"' in source
     assert 'startsWith("/v1/")' in source
     assert 'request.method !== "GET"' in source
     assert 'request.headers.has("Authorization")' in source
@@ -93,6 +93,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "pandora_chat",
         "pandora_project_run",
         "pandora_offline_queue",
+        "pandora_mission_control",
         "authentication",
         "remote_access",
         "pairing_code_allowed",
@@ -104,6 +105,7 @@ async def test_pandora_status_exposes_only_safe_fields() -> None:
         "pandora_chat": "ready",
         "pandora_project_run": "ready",
         "pandora_offline_queue": "ready",
+        "pandora_mission_control": "ready",
         "authentication": "prometheus",
         "remote_access": "disabled",
         "pairing_code_allowed": False,
@@ -135,6 +137,11 @@ def test_pandora_javascript_uses_safe_browser_primitives() -> None:
     assert '"/v1/pandora/projects"' in source
     assert '"/v1/pandora/project-run/preview"' in source
     assert '"/v1/pandora/project-run/commit"' in source
+    for marker in ("nav-mission-control", "mission-control-card", "mission-control-approve", "mission-control-reject", "mission-control-pause", "mission-control-resume", "mission-control-refresh"):
+        assert marker in source or marker in (PROJECT_ROOT / "app" / "pandora_ui.py").read_text("utf-8")
+    assert "enqueueOutbox(\"approval\"" not in source
+    assert "enqueueOutbox(\"pause\"" not in source
+    assert "enqueueOutbox(\"resume\"" not in source
     assert '"/v1/pandora/project-run/latest"' in source
     assert '`/v1/pandora/project-run/${encodeURIComponent(activeProjectRunId)}`' in source
     assert "const CHAT_MESSAGE_MAX_CHARS = 4000" in source

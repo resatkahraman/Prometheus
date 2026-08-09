@@ -241,6 +241,15 @@ PANDORA_UI = """<!doctype html>
           <p class="support-note">Onay, çalıştırma, reddetme, yeniden deneme ve geri alma işlemleri masaüstü Prometheus'ta kalır.</p>
         </section>
       </section>
+      <section id="mission-control-card" class="mission-control-card app-view" aria-labelledby="mission-control-title" hidden>
+        <header class="section-header"><div><p class="eyebrow">Güvenli Mission Control</p><h2 id="mission-control-title">Mission Control</h2></div><button id="mission-control-refresh" class="secondary-action compact-action" type="button">Yenile</button></header>
+        <p id="mission-control-status" class="run-status-copy" role="status" aria-live="polite"></p>
+        <div class="progress-track" aria-hidden="true"><span id="mission-control-progress"></span></div>
+        <div id="mission-control-tasks" class="run-task-list"></div>
+        <section id="mission-control-approval" class="run-panel" hidden><h3 id="mission-control-approval-title"></h3><ul id="mission-control-approval-files"></ul><div class="composer-footer"><button id="mission-control-approve" class="primary-action compact-action" type="button">Onayla</button><button id="mission-control-reject" class="secondary-action compact-action" type="button">Reddet</button></div></section>
+        <div class="composer-footer"><button id="mission-control-pause" class="secondary-action compact-action" type="button">Duraklat</button><button id="mission-control-resume" class="secondary-action compact-action" type="button">Sürdür</button></div>
+        <p id="mission-control-feedback" class="support-note" role="status" aria-live="polite"></p>
+      </section>
     </main>
 
     <nav class="bottom-nav" aria-label="Ana navigasyon">
@@ -249,6 +258,9 @@ PANDORA_UI = """<!doctype html>
       </button>
       <button id="nav-project-run" class="nav-item" type="button" disabled>
         <span>Görevler</span><small>Onay aktarımı</small>
+      </button>
+      <button id="nav-mission-control" class="nav-item" type="button" disabled>
+        <span>Mission Control</span><small>Güvenli yönetim</small>
       </button>
       <span class="nav-item disabled" aria-disabled="true">
         <span>Ayarlar</span><small>Yakında</small>

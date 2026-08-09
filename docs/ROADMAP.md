@@ -16,6 +16,11 @@
 - [x] TASK-048: Skill Manifest and Capability Policy
 - [x] TASK-049: Pandora Offline Queue and Idempotent Reconnect
 
+## Pandora Completion
+- [x] Mobile Approvals and Mission Control
+- [ ] Secure Remote Access Hardening
+- [ ] Voice Activation and Finalization
+
 ## Phase 2: Context and Safe Patching
 - [x] TASK-050: Project Workspace - completed and validated; final suite 806 passed with 1 existing warning
 - [x] TASK-051: Context Bounds

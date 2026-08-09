@@ -7,7 +7,7 @@ from typing import Literal
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.agent.engine import AgentEngine
 from app.arena.catalog import list_scenarios
@@ -164,8 +164,10 @@ from app.security.pandora import (
     PANDORA_PROJECT_RUN_RATE_LIMIT_DETAIL,
     PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL,
     PANDORA_OFFLINE_QUEUE_REVISION,
+    PANDORA_MISSION_CONTROL_REVISION,
     PandoraRequestIdError,
     PandoraRequestConflictError,
+    PandoraMobileControlBusyError,
     PANDORA_PAIRING_INVALID_DETAIL,
     PANDORA_PAIRING_LOCAL_ONLY_DETAIL,
     PANDORA_PAIRING_REQUIRED_DETAIL,
@@ -230,6 +232,11 @@ class PauseMissionRequest(BaseModel):
 class ResumeMissionRequest(BaseModel):
     checkpoint_id: str | None = None
     expected_control_version: int | None = None
+
+
+class PandoraApprovalDecisionRequest(BaseModel):
+    decision: Literal["approve", "reject"]
+    control_token: str = Field(min_length=69, max_length=69)
 
 
 class CreateMissionCheckpointRequest(BaseModel):
@@ -583,6 +590,7 @@ async def pandora_status(request: Request) -> JSONResponse:
             "pandora_chat": "ready",
             "pandora_project_run": "ready",
             "pandora_offline_queue": "ready",
+            "pandora_mission_control": "ready",
             "authentication": authentication,
             "remote_access": (
                 "enabled"
@@ -1072,6 +1080,125 @@ async def read_latest_pandora_project_run(
         request=request,
         response=response,
     )
+
+
+async def _pandora_mission_control_projection(*, manager, supervisor, token: str, command_id: str) -> dict:
+    command = await supervisor.get(command_id)
+    mission = await supervisor.get_mission_state_projection(command_id)
+    terminal = bool(command.archived or command.status in {"completed", "failed", "cancelled", "reverted"})
+    approval_task = next((task for task in command.tasks if task.status == "awaiting_approval" and task.approval_state == "pending" and task.approval_id and task.approval_version >= 1), None)
+    approval = None
+    if approval_task is not None:
+        exact_files = sorted({path.replace("\\", "/") for path in approval_task.exact_files if isinstance(path, str) and path and not path.startswith(("/", "\\")) and ":" not in path})
+        control_token = manager.mobile_approval_token(token, command_id=command_id, approval_id=approval_task.approval_id, approval_version=approval_task.approval_version)
+        if control_token:
+            approval = {"available": True, "task_title": str(approval_task.title)[:240], "exact_files": exact_files, "exact_file_count": len(exact_files), "control_token": control_token}
+    can_pause = not terminal and command.status not in {"paused"} and not bool(getattr(command, "pause_requested", False))
+    can_resume = command.status == "paused" and bool(getattr(command, "active_checkpoint_id", None)) and not terminal
+    return {
+        "revision": PANDORA_MISSION_CONTROL_REVISION,
+        "command_id": command.id,
+        "status": command.status,
+        "terminal": terminal,
+        "goal": command.goal,
+        "workspace_path": command.project_run_workspace_path or ".",
+        "progress_percent": round((sum(task.status == "completed" for task in command.tasks) / len(command.tasks)) * 100) if command.tasks else 0,
+        "completed_tasks": sum(task.status == "completed" for task in command.tasks),
+        "total_tasks": len(command.tasks),
+        "waiting_approval_tasks": sum(task.status == "awaiting_approval" or task.approval_state == "pending" for task in command.tasks),
+        "approval": approval,
+        "mission": {"state": mission.command_status or command.status, "can_pause": can_pause, "can_resume": can_resume},
+        "tasks": [{"title": str(task.title)[:240], "status": task.status, "approval_state": task.approval_state, "exact_file_count": len(task.exact_files)} for task in command.tasks],
+    }
+
+
+def _require_pandora_owner(request: Request, manager, token: str | None, command_id: str) -> None:
+    if request.state.pandora_session is None:
+        raise HTTPException(status_code=401, detail=PANDORA_PAIRING_REQUIRED_DETAIL)
+    if not manager.owns_project_run(token, command_id):
+        raise HTTPException(status_code=404, detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL)
+
+
+@app.get("/v1/pandora/project-run/{command_id}/mission-control", tags=["pandora"])
+async def read_pandora_mission_control(command_id: str, request: Request, response: Response) -> dict:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+    _require_pandora_owner(request, manager, token, command_id)
+    try:
+        result = await _pandora_mission_control_projection(manager=manager, supervisor=request.app.state.supervisor, token=token, command_id=command_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=PANDORA_PROJECT_RUN_UNAVAILABLE_DETAIL) from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.post("/v1/pandora/project-run/{command_id}/approval", tags=["pandora"])
+async def decide_pandora_approval(command_id: str, payload: PandoraApprovalDecisionRequest, request: Request, response: Response) -> dict:
+    manager = _pandora_sessions(request.app)
+    token = request_pandora_session_token(request)
+    _require_pandora_owner(request, manager, token, command_id)
+    try:
+        if not manager.begin_mobile_control(token, command_id):
+            raise HTTPException(status_code=404, detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL)
+    except PandoraMobileControlBusyError as exc:
+        raise HTTPException(status_code=409, detail="Pandora Mission Control işlemi zaten sürüyor.") from exc
+    try:
+        command = await request.app.state.supervisor.get(command_id)
+        task = next((item for item in command.tasks if item.status == "awaiting_approval" and item.approval_state == "pending" and item.approval_id and item.approval_version >= 1), None)
+        if task is None or not manager.mobile_approval_token_is_valid(token, command_id=command_id, approval_id=task.approval_id, approval_version=task.approval_version, control_token=payload.control_token):
+            raise HTTPException(status_code=409, detail="Pandora mobile approval is stale. Refresh Mission Control.")
+        if payload.decision == "approve":
+            await request.app.state.supervisor.approve(command_id=command_id, task_id=task.id, expected_approval_id=task.approval_id, expected_approval_version=task.approval_version, background=False)
+        else:
+            await request.app.state.supervisor.reject(command_id=command_id, task_id=task.id, expected_approval_id=task.approval_id, expected_approval_version=task.approval_version)
+        result = await _pandora_mission_control_projection(manager=manager, supervisor=request.app.state.supervisor, token=token, command_id=command_id)
+        response.headers["Cache-Control"] = "no-store"
+        return result
+    except HTTPException:
+        raise
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Pandora mobile approval is stale. Refresh Mission Control.") from exc
+    finally:
+        manager.end_mobile_control(token, command_id)
+
+
+@app.post("/v1/pandora/project-run/{command_id}/pause", tags=["pandora"])
+async def pause_pandora_mission(command_id: str, request: Request, response: Response) -> dict:
+    manager = _pandora_sessions(request.app); token = request_pandora_session_token(request); _require_pandora_owner(request, manager, token, command_id)
+    try:
+        if not manager.begin_mobile_control(token, command_id): raise HTTPException(status_code=404, detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL)
+    except PandoraMobileControlBusyError as exc: raise HTTPException(status_code=409, detail="Pandora Mission Control işlemi zaten sürüyor.") from exc
+    try:
+        command = await request.app.state.supervisor.get(command_id)
+        if command.status in {"paused", "completed", "failed", "cancelled", "reverted"} or getattr(command, "pause_requested", False): raise HTTPException(status_code=409, detail="Pandora Mission Control durumu pause için uygun değil.")
+        await request.app.state.supervisor.request_mission_pause(command_id, expected_control_version=command.control_version)
+        response.headers["Cache-Control"] = "no-store"
+        return await _pandora_mission_control_projection(manager=manager, supervisor=request.app.state.supervisor, token=token, command_id=command_id)
+    except HTTPException: raise
+    except (KeyError, ValueError) as exc: raise HTTPException(status_code=409, detail="Pandora Mission Control durumu pause için uygun değil.") from exc
+    finally: manager.end_mobile_control(token, command_id)
+
+
+@app.post("/v1/pandora/project-run/{command_id}/resume", tags=["pandora"])
+async def resume_pandora_mission(command_id: str, request: Request, response: Response) -> dict:
+    manager = _pandora_sessions(request.app); token = request_pandora_session_token(request); _require_pandora_owner(request, manager, token, command_id)
+    try:
+        if not manager.begin_mobile_control(token, command_id): raise HTTPException(status_code=404, detail=PANDORA_PROJECT_RUN_NOT_FOUND_DETAIL)
+    except PandoraMobileControlBusyError as exc: raise HTTPException(status_code=409, detail="Pandora Mission Control işlemi zaten sürüyor.") from exc
+    try:
+        command = await request.app.state.supervisor.get(command_id)
+        checkpoint_id = getattr(command, "active_checkpoint_id", None)
+        if command.status != "paused" or not checkpoint_id: raise HTTPException(status_code=409, detail="Pandora Mission Control durumu resume için uygun değil.")
+        await request.app.state.supervisor.resume_mission(command_id, checkpoint_id=checkpoint_id, expected_control_version=command.control_version)
+        response.headers["Cache-Control"] = "no-store"
+        return await _pandora_mission_control_projection(manager=manager, supervisor=request.app.state.supervisor, token=token, command_id=command_id)
+    except HTTPException: raise
+    except (KeyError, ValueError) as exc: raise HTTPException(status_code=409, detail="Pandora Mission Control durumu resume için uygun değil.") from exc
+    finally: manager.end_mobile_control(token, command_id)
 
 
 @app.get(
