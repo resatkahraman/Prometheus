@@ -25,7 +25,7 @@ env/
 coverage.xml
 htmlcov/
 # Prometheus runtime artifacts
-workspace/
+/workspace/
 *.db
 *.sqlite
 *.sqlite3
