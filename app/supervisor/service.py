@@ -8647,10 +8647,7 @@ RET verirsen somut yeniden çalışma görevini yaz."""
             )
             resolved = policy.resolve(clean_path, must_exist=False)
             policy.ensure_not_sensitive(resolved)
-            try:
-                norm_ws_path = resolved.relative_to(self.settings.workspace_root).as_posix()
-            except ValueError:
-                norm_ws_path = "."
+            norm_ws_path = policy.relative(resolved)
             if norm_ws_path == "":
                 norm_ws_path = "."
         except Exception as exc:
