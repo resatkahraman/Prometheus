@@ -32,4 +32,5 @@
 - [x] TASK-060: Trusted Self-Development Evidence Resolution
 - [~] TASK-061: Canonical Self-Development Candidate Materialization - implemented; validation pending user-run tests
 - [x] TASK-062: Canonical Isolated Candidate Evaluation
+- [x] TASK-063: Canonical Post-Evaluation Supervised Decision Gate
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
