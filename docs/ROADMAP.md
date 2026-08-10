@@ -34,4 +34,5 @@
 - [x] TASK-062: Canonical Isolated Candidate Evaluation
 - [x] TASK-063: Canonical Post-Evaluation Supervised Decision Gate
 - [x] TASK-064: Canonical Explicit Human Decision Binding
+- [~] TASK-065: Canonical Supervised Promotion Authority - implemented; validation pending user-run tests
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
