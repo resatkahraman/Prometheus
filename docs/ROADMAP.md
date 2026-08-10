@@ -29,4 +29,5 @@
 
 ## Phase 3: Supervised Self-Development
 - [x] TASK-059: Canonical Self-Development Proposal
+- [x] TASK-060: Trusted Self-Development Evidence Resolution
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution

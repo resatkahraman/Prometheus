@@ -444,6 +444,36 @@ class ImprovementStore:
             limit,
         )
 
+    async def get_episode(self, episode_id: str, *, project_key: str) -> dict[str, Any]:
+        await self.initialize()
+        row = await asyncio.to_thread(self._get_episode_sync, episode_id, project_key)
+        if row is None:
+            raise KeyError(episode_id)
+        return row
+
+    def _get_episode_sync(self, episode_id: str, project_key: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM experience_episodes WHERE id=? AND project_key=? LIMIT 1",
+                (episode_id, project_key),
+            ).fetchone()
+        return dict(row) if row else None
+
+    async def get_benchmark(self, run_id: str, *, project_key: str) -> dict[str, Any]:
+        await self.initialize()
+        row = await asyncio.to_thread(self._get_benchmark_sync, run_id, project_key)
+        if row is None:
+            raise KeyError(run_id)
+        return row
+
+    def _get_benchmark_sync(self, run_id: str, project_key: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM benchmark_runs WHERE id=? AND project_key=? LIMIT 1",
+                (run_id, project_key),
+            ).fetchone()
+        return dict(row) if row else None
+
     def _list_table_sync(
         self,
         table: str,
