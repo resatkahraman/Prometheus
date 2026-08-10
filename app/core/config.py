@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,6 +19,9 @@ class Settings(BaseSettings):
     app_name: str = "Prometheus"
     environment: str = "development"
     http_remote_access_enabled: bool = False
+    http_remote_access_mode: Literal["direct", "tailscale_serve"] = "direct"
+    http_remote_tailscale_user: str | None = None
+    http_remote_external_origin: str | None = None
     http_auth_token: SecretStr | None = None
 
     gemini_api_key: str | None = None
@@ -465,6 +469,22 @@ class Settings(BaseSettings):
                 "HTTP_REMOTE_ACCESS_ENABLED=true için HTTP_AUTH_TOKEN "
                 "en az 32 karakter olmalı."
             )
+        if self.http_remote_access_mode == "tailscale_serve":
+            user = (self.http_remote_tailscale_user or "").strip()
+            if not self.http_remote_access_enabled or not user or len(user) > 254 or any(ord(char) > 127 or char in "\r\n" for char in user) or user.casefold() in {"*", "any", "all"}:
+                raise ValueError("Tailscale Serve identity configuration is invalid.")
+            raw_origin = (self.http_remote_external_origin or "").strip()
+            parsed = urlsplit(raw_origin)
+            if parsed.scheme.casefold() != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment or any(char.isspace() or char in "\r\n" for char in raw_origin):
+                raise ValueError("Tailscale Serve external origin configuration is invalid.")
+            try:
+                host = parsed.hostname.casefold()
+                if parsed.port not in {None, 443} or "*" in host:
+                    raise ValueError
+            except ValueError:
+                raise ValueError("Tailscale Serve external origin configuration is invalid.") from None
+            self.http_remote_tailscale_user = user
+            self.http_remote_external_origin = f"https://{host}"
         if (
             self.supervisor_default_autonomy_mode == "trusted"
             and not self.supervisor_trusted_autonomy_enabled

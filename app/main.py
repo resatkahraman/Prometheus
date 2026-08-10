@@ -148,7 +148,11 @@ from app.security.csrf import (
 )
 from app.security.network import (
     REMOTE_ACCESS_DISABLED_DETAIL,
+    SECURE_REMOTE_TRANSPORT_DETAIL,
     is_local_http_request,
+    request_is_direct_loopback,
+    request_is_verified_tailscale_serve,
+    request_origin_is_allowed,
 )
 from app.security.pandora import (
     PANDORA_CHAT_BUSY_DETAIL,
@@ -406,13 +410,18 @@ async def enforce_http_access_security(
     if settings is None:
         settings = get_settings()
 
+    remote_access_enabled = bool(getattr(settings, "http_remote_access_enabled", False))
+    remote_access_mode = getattr(settings, "http_remote_access_mode", "direct")
+    remote_external_origin = getattr(settings, "http_remote_external_origin", None)
     local_request = is_local_http_request(request)
+    verified_tailscale = request_is_verified_tailscale_serve(request, settings)
     manager = _pandora_sessions(request.app)
     request.state.local_http_request = local_request
+    request.state.verified_tailscale_serve = verified_tailscale
     request.state.prometheus_full_access = False
     request.state.pandora_session = None
 
-    if not settings.http_remote_access_enabled:
+    if not remote_access_enabled:
         if not local_request:
             return JSONResponse(
                 status_code=403,
@@ -428,6 +437,12 @@ async def enforce_http_access_security(
                 content={"detail": CSRF_REQUIRED_DETAIL},
             )
         return await call_next(request)
+
+    if remote_access_mode == "tailscale_serve":
+        if not (local_request or verified_tailscale):
+            return JSONResponse(status_code=403, content={"detail": SECURE_REMOTE_TRANSPORT_DETAIL})
+        if verified_tailscale and not request_origin_is_allowed(request, remote_external_origin):
+            return JSONResponse(status_code=403, content={"detail": SECURE_REMOTE_TRANSPORT_DETAIL})
 
     expected_token = configured_http_auth_token(
         settings.http_auth_token
@@ -485,7 +500,13 @@ async def enforce_http_access_security(
 
     request.state.prometheus_full_access = full_access
     request.state.pandora_session = pandora_session
-    return await call_next(request)
+    result = await call_next(request)
+    if verified_tailscale:
+        result.headers["Strict-Transport-Security"] = "max-age=31536000"
+        result.headers["X-Content-Type-Options"] = "nosniff"
+        result.headers["X-Frame-Options"] = "DENY"
+        result.headers["Referrer-Policy"] = "no-referrer"
+    return result
 
 
 @app.exception_handler(Exception)
@@ -668,7 +689,7 @@ async def pair_pandora_device(
         value=token,
         max_age=manager.session_ttl_seconds,
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=request.url.scheme == "https" or bool(getattr(request.state, "verified_tailscale_serve", False)),
         samesite="strict",
         path=PANDORA_SESSION_COOKIE_PATH,
     )
