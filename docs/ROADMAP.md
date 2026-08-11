@@ -35,4 +35,5 @@
 - [x] TASK-063: Canonical Post-Evaluation Supervised Decision Gate
 - [x] TASK-064: Canonical Explicit Human Decision Binding
 - [~] TASK-065: Canonical Supervised Promotion Authority - implemented; validation pending user-run tests
+- [x] TASK-066: Canonical Approved Candidate Safe Patch Binding
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
