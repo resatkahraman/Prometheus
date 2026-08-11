@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ApprovalReview, CoreStatus, DesktopBootstrap, DesktopCommandResponse, MemoryPage, Mission, MissionEvents, MissionHistory, ReceiptPage } from '../types/desktop';
+import type { ApprovalReview, CoreStatus, DesktopBootstrap, DesktopCommandResponse, MemoryPage, Mission, MissionEvents, MissionHistory, ReceiptPage, RuntimeStatus } from '../types/desktop';
 
 const native = () => '__TAURI_INTERNALS__' in window;
 const previewStatus: CoreStatus = { state: 'preview', code: 'preview', message: 'Core transport is available only in the native application.' };
@@ -28,6 +28,9 @@ export async function getDesktopMissionEvents(missionId: string): Promise<Missio
   if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' };
   return invoke<MissionEvents>('desktop_mission_events', { missionId });
 }
+export async function getDesktopRuntimeStatus(): Promise<RuntimeStatus> { if (!native()) return { connectivity: 'offline', ownership: 'none', lifecycle: 'launch_unavailable', can_start: false, can_stop: false, message_code: 'preview', message: 'Core lifecycle is available only in the native application.' }; return invoke<RuntimeStatus>('desktop_runtime_status'); }
+export async function startDesktopCore(): Promise<RuntimeStatus> { if (!native()) throw { code: 'launch_unavailable', message: 'Core lifecycle is available only in the native application.' }; return invoke<RuntimeStatus>('desktop_start_core'); }
+export async function stopDesktopCore(): Promise<RuntimeStatus> { if (!native()) throw { code: 'stop_not_authorized', message: 'Core lifecycle is available only in the native application.' }; return invoke<RuntimeStatus>('desktop_stop_core'); }
 export async function getDesktopMissionHistory(missionId: string): Promise<MissionHistory> { if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' }; return invoke<MissionHistory>('desktop_mission_history', { missionId }); }
 export async function getDesktopMissionReceipts(missionId: string): Promise<ReceiptPage> { if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' }; return invoke<ReceiptPage>('desktop_mission_receipts', { missionId }); }
 export async function getDesktopMissionMemory(missionId: string): Promise<MemoryPage> { if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' }; return invoke<MemoryPage>('desktop_mission_memory', { missionId }); }

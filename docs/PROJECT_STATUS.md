@@ -6,11 +6,11 @@ DESKTOP-001 status: Completed and validated
 Baseline before DESKTOP-001: 306d62f0a136e2b096f8ad9e73726fa3807d1162
 Implementation commit: The Git commit containing this status update
 TASK-059 Canonical Self-Development Proposal completed. Prometheus now has a deterministic, immutable, project-bound and evidence-referenced proposal primitive for supervised self-development. Proposals are proposal-only and cannot execute, promote, mutate main, or prove human approval. Source-patch proposals bind authorized existing source/test targets through RepositoryMap and ScopeLock while intentionally containing no executable edit payload.
-Current product task: DESKTOP-005 - Activity, Receipts and Memory
+Current product task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
 DESKTOP-002 status: Implementation complete and automated-validated; manual Desktop acceptance deferred until the complete Desktop task series is finished.
 DESKTOP-PKG-001 status: COMPLETE
-Current Desktop task: DESKTOP-005 - Activity, Receipts and Memory
-Next architectural stage: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
+Current Desktop task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
+Next architectural stage: DESKTOP-006 - Agents and Model Control
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
 Warning: pre-existing Starlette/httpx TestClient deprecation warning.
@@ -23,6 +23,8 @@ DESKTOP-003 implementation adds native mission control, canonical mission/activi
 DESKTOP-004 adds an exact mission-plus-approval review surface over canonical Core approval artifacts. Targeted Desktop review tests: 8 passed; Desktop regression: 20 passed; focused approval/Supervisor regression: 71 passed, 1 warning; Rust unit tests: 4 passed; cargo check: PASS; npm.cmd ci: 73 packages, 0 vulnerabilities; frontend production build: PASS; final full Python suite: 963 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual acceptance remains deferred until the complete Desktop task series is finished.
 
 DESKTOP-005 adds read-only canonical Activity, Receipts, Mission History and Decision Memory surfaces bound to the selected mission/project. Targeted Desktop suite: 27 passed; focused canonical regression: 133 passed, 1 warning; Rust unit tests: 4 passed; cargo check: PASS; npm.cmd ci: 73 packages, 0 vulnerabilities; frontend production build: PASS; final full Python suite: 970 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual acceptance remains deferred until the complete Desktop task series is finished.
+
+DESKTOP-RUNTIME-001 adds bounded native ownership of the exact Core child started by Desktop. External, authentication-required and port-conflict Core instances remain unmanaged and cannot be stopped. Start is explicit and bounded; no shell, PID authority, auto-start or auto-restart exists. Targeted Python validation: 27 passed; Rust unit tests: 6 passed; cargo check: PASS; npm.cmd ci: 73 packages, 0 vulnerabilities; frontend build: PASS; final full Python suite: 970 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual acceptance remains deferred until the complete Desktop task series is finished.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)

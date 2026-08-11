@@ -49,7 +49,7 @@
 - [x] DESKTOP-001: Native Command Center Foundation
 - [x] DESKTOP-PKG-001: Windows Development Packaging
 - [x] DESKTOP-002: Secure Core Transport and Live Command Surface - automated validation passed; manual acceptance deferred
-- [ ] DESKTOP-RUNTIME-001: Bounded Core Runtime Lifecycle
+- [x] DESKTOP-RUNTIME-001: Bounded Core Runtime Lifecycle - automated validation passed; manual acceptance deferred
 - [x] DESKTOP-003: Native Mission Control and Approval Surface - automated validation passed; manual acceptance deferred
 - [x] DESKTOP-004: Approvals and Change Review - automated validation passed; manual acceptance deferred
 - [x] DESKTOP-005: Activity, Receipts and Memory - automated validation passed; manual acceptance deferred

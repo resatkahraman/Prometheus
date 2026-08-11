@@ -9,6 +9,11 @@ description="Allows the Prometheus Desktop main window to read bounded local Cor
 commands.allow=["desktop_core_status"]
 
 [[permission]]
+identifier="desktop-core-runtime"
+description="Allows the Prometheus Desktop main window to inspect and explicitly control the bounded canonical Core runtime."
+commands.allow=["desktop_runtime_status","desktop_start_core","desktop_stop_core"]
+
+[[permission]]
 identifier="desktop-submit-command"
 description="Allows the Prometheus Desktop main window to submit a bounded command to the local Core."
 commands.allow=["desktop_submit_command"]

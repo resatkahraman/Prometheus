@@ -195,6 +195,12 @@
           "markdownDescription": "Allows the Prometheus Desktop main window to invoke the bounded desktop bootstrap command."
         },
         {
+          "description": "Allows the Prometheus Desktop main window to inspect and explicitly control the bounded canonical Core runtime.",
+          "type": "string",
+          "const": "desktop-core-runtime",
+          "markdownDescription": "Allows the Prometheus Desktop main window to inspect and explicitly control the bounded canonical Core runtime."
+        },
+        {
           "description": "Allows the Prometheus Desktop main window to read bounded local Core status.",
           "type": "string",
           "const": "desktop-core-status",
