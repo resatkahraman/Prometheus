@@ -37,5 +37,6 @@
 - [~] TASK-065: Canonical Supervised Promotion Authority - implemented; validation pending user-run tests
 - [x] TASK-066: Canonical Approved Candidate Safe Patch Binding
 - [x] TASK-067: Canonical Promotion Execution Receipt and Replay Contract
-- [ ] TASK-068: Canonical Supervised Promotion Execution - next
+- [x] TASK-068: Canonical Supervised Promotion Execution
+- [ ] TASK-069: Post-promotion verification and supervised integration - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
