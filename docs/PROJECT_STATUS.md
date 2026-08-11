@@ -9,13 +9,16 @@ TASK-059 Canonical Self-Development Proposal completed. Prometheus now has a det
 Current product task: DESKTOP-002 - Secure Core Transport and Live Command Surface
 DESKTOP-002 status: Implementation complete and automated-validated; manual Desktop acceptance deferred until the complete Desktop task series is finished.
 DESKTOP-PKG-001 status: COMPLETE
-Next architectural stage: bounded Desktop runtime lifecycle step, then DESKTOP-003 - Projects and Missions
+Current Desktop task: DESKTOP-003 - Native Mission Control and Approval Surface
+Next architectural stage: DESKTOP-004 - Approvals and Change Review
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
 Warning: pre-existing Starlette/httpx TestClient deprecation warning.
 Pandora: Core completed through TASK-039; further development intentionally deferred.
 
 DESKTOP-002 automated validation: targeted Python 6 passed; focused Python 28 passed with 1 warning; Rust unit tests 3 passed; cargo check passed; npm.cmd ci installed 73 packages with 0 vulnerabilities; frontend production build passed; final full Python suite 949 passed with 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual Desktop acceptance is deferred until the complete Desktop task series is finished. DESKTOP-002 does not auto-start Prometheus Core; native packaged Core lifecycle remains a later bounded Desktop runtime concern.
+
+DESKTOP-003 implementation adds native mission control, canonical mission/activity reads, exact approval identity binding and explicit Supervisor-delegated approval/rejection. Targeted Python validation: 12 passed; focused Python regression: 28 passed, 1 warning; Rust unit tests: 4 passed; cargo check: PASS; frontend production build: PASS; final full Python suite: 955 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual acceptance remains deferred until the complete Desktop task series is finished.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)

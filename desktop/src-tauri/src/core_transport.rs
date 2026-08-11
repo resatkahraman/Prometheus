@@ -20,6 +20,21 @@ pub struct DesktopCommandRequest { pub message: String }
 #[derive(Deserialize, Serialize)]
 pub struct DesktopCommandResponse { pub status: String, pub mission_id: String, pub summary: Option<String>, pub requires_approval: bool }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct MissionTaskView { pub id: String, pub title: String, pub status: String, pub assigned_agent: String, pub approval_id: Option<String>, pub approval_version: u32, pub approval_state: String, pub approval_description: Option<String>, pub approval_preview: Option<serde_json::Value>, pub approval_tool: Option<String>, pub last_approval_message: Option<String> }
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct MissionView { pub id: String, pub goal: String, pub status: String, pub tasks: Vec<MissionTaskView>, pub created_at: String, pub updated_at: Option<String>, pub operation_message: Option<String>, pub failure_reason: Option<String> }
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct MissionEventView { pub sequence: u64, pub event_type: String, pub message: String, pub occurred_at: String, pub task_id: Option<String>, pub approval_id: Option<String> }
+
+#[derive(Clone, Deserialize, Serialize)]
+pub struct MissionEventsView { pub mission_id: String, pub events: Vec<MissionEventView>, pub count: u64, pub has_more: bool }
+
+#[derive(Serialize)]
+struct ApprovalDecisionRequest { approval_id: String, approval_version: u32, background: bool }
+
 #[derive(Debug, Serialize)]
 pub struct TransportFailure { pub code: &'static str, pub message: &'static str }
 
@@ -38,6 +53,53 @@ fn client(timeout: Duration) -> Result<Client, TransportFailure> {
 }
 
 fn endpoint(path: &str) -> String { format!("http://{}:{}{}", CORE_HOST, configured_port(), path) }
+
+fn valid_segment(value: &str) -> bool { !value.is_empty() && value.len() <= 160 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') }
+
+fn mission_path(mission_id: &str, suffix: &str) -> Result<String, TransportFailure> {
+    if !valid_segment(mission_id) { return Err(TransportFailure { code: "invalid_identifier", message: "Mission kimliği geçersiz." }); }
+    Ok(endpoint(&format!("/v1/supervisor/commands/{mission_id}{suffix}")))
+}
+
+fn task_path(mission_id: &str, task_id: &str, action: &str) -> Result<String, TransportFailure> {
+    if !valid_segment(task_id) { return Err(TransportFailure { code: "invalid_identifier", message: "Görev kimliği geçersiz." }); }
+    Ok(mission_path(mission_id, &format!("/tasks/{task_id}/{action}"))?)
+}
+
+async fn response_json<T: for<'de> Deserialize<'de>>(response: reqwest::Response) -> Result<T, TransportFailure> {
+    let status = response.status();
+    let body = bounded_body(response).await?;
+    if status == StatusCode::UNAUTHORIZED { return Err(TransportFailure { code: "auth_required", message: "Core kimlik doğrulaması gerekli." }); }
+    if status == StatusCode::NOT_FOUND { return Err(TransportFailure { code: "not_found", message: "Mission veya görev bulunamadı." }); }
+    if status == StatusCode::CONFLICT { return Err(TransportFailure { code: "conflict", message: "Core durumu değişti; güncel durum yeniden yüklenmeli." }); }
+    if status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY { return Err(TransportFailure { code: "invalid_request", message: "Core isteği geçersiz." }); }
+    if !status.is_success() { return Err(TransportFailure { code: "protocol_error", message: "Core beklenmeyen bir yanıt verdi." }); }
+    serde_json::from_slice(&body).map_err(|_| TransportFailure { code: "protocol_error", message: "Core yanıtı geçersiz." })
+}
+
+pub async fn mission(mission_id: String) -> Result<MissionView, TransportFailure> {
+    let client = client(Duration::from_secs(10))?;
+    let response = auth_header(client.get(mission_path(&mission_id, "").map_err(|_| TransportFailure { code: "invalid_identifier", message: "Mission kimliği geçersiz." })?)).send().await.map_err(|_| TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi." })?;
+    response_json(response).await
+}
+
+pub async fn mission_events(mission_id: String) -> Result<MissionEventsView, TransportFailure> {
+    let client = client(Duration::from_secs(10))?;
+    let path = mission_path(&mission_id, "/mission-events?limit=50").map_err(|_| TransportFailure { code: "invalid_identifier", message: "Mission kimliği geçersiz." })?;
+    let response = auth_header(client.get(path)).send().await.map_err(|_| TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi." })?;
+    response_json(response).await
+}
+
+async fn decide_task(mission_id: String, task_id: String, approval_id: String, approval_version: u32, action: &str) -> Result<MissionView, TransportFailure> {
+    if !valid_segment(&approval_id) || approval_version == 0 { return Err(TransportFailure { code: "invalid_identifier", message: "Onay kimliği geçersiz." }); }
+    let client = client(Duration::from_secs(120))?;
+    let path = task_path(&mission_id, &task_id, action).map_err(|_| TransportFailure { code: "invalid_identifier", message: "Mission veya görev kimliği geçersiz." })?;
+    let response = auth_header(client.post(path).json(&ApprovalDecisionRequest { approval_id, approval_version, background: true })).send().await.map_err(|_| TransportFailure { code: "uncertain", message: "Karar iletimi belirsiz; otomatik tekrar yapılmadı." })?;
+    response_json(response).await
+}
+
+pub async fn approve_task(mission_id: String, task_id: String, approval_id: String, approval_version: u32) -> Result<MissionView, TransportFailure> { decide_task(mission_id, task_id, approval_id, approval_version, "approve").await }
+pub async fn reject_task(mission_id: String, task_id: String, approval_id: String, approval_version: u32) -> Result<MissionView, TransportFailure> { decide_task(mission_id, task_id, approval_id, approval_version, "reject").await }
 
 async fn bounded_body(response: reqwest::Response) -> Result<Vec<u8>, TransportFailure> {
     if response.content_length().is_some_and(|length| length as usize > MAX_RESPONSE_BYTES) { return Err(TransportFailure { code: "protocol_error", message: "Core yanıtı izin verilen boyutu aşıyor." }); }
@@ -79,4 +141,5 @@ mod tests {
     #[test] fn default_port_is_loopback_contract() { assert_eq!(resolve_port(None), 8765); assert!(endpoint("/v1/health").starts_with("http://127.0.0.1:")); }
     #[test] fn port_override_is_bounded() { assert_eq!(resolve_port(Some("4321")), 4321); assert_eq!(resolve_port(Some("80")), 8765); assert_eq!(resolve_port(Some("65536")), 8765); assert_eq!(resolve_port(Some("nope")), 8765); }
     #[test] fn canonical_endpoints_are_loopback_only() { assert_eq!(CORE_HOST, "127.0.0.1"); assert_eq!(endpoint("/v1/health"), "http://127.0.0.1:8765/v1/health"); assert_eq!(endpoint("/v1/desktop/command"), "http://127.0.0.1:8765/v1/desktop/command"); }
+    #[test] fn mission_and_approval_paths_are_bounded() { assert!(mission_path("mission-1", "").unwrap().ends_with("/mission-1")); assert!(task_path("mission-1", "task-1", "approve").unwrap().ends_with("/tasks/task-1/approve")); assert!(mission_path("../escape", "").is_err()); assert!(task_path("mission-1", "task/escape", "reject").is_err()); assert!(valid_segment("approval-1")); assert!(!valid_segment("")); }
 }

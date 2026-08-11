@@ -50,8 +50,8 @@
 - [x] DESKTOP-PKG-001: Windows Development Packaging
 - [x] DESKTOP-002: Secure Core Transport and Live Command Surface - automated validation passed; manual acceptance deferred
 - [ ] DESKTOP-RUNTIME-001: Bounded Core Runtime Lifecycle
-- DESKTOP-003: Projects and Missions
-- DESKTOP-004: Approvals and Change Review
+- [x] DESKTOP-003: Native Mission Control and Approval Surface - automated validation passed; manual acceptance deferred
+- [ ] DESKTOP-004: Approvals and Change Review - next
 - DESKTOP-005: Activity, Receipts and Memory
 - DESKTOP-006: Agents and Model Control
 - DESKTOP-007: Native OS Integration
