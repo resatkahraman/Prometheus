@@ -1,0 +1,3 @@
+import type { NavigationView } from '../../types/desktop';
+import { useLocale } from '../../i18n/LocaleContext';
+export function ContextSidebar({ active, onSelect }: { active: NavigationView; onSelect: (v: NavigationView) => void }) { const { t } = useLocale(); return <aside className="sidebar"><div className="eyebrow">PROMETHEUS</div><h2>{t.center}</h2><div className="navList">{(['home','command','projects','missions','approvals','changes','agents','activity','memory','settings'] as NavigationView[]).map(v => <button className={active === v ? 'selected' : ''} onClick={() => onSelect(v)} key={v}>{t.nav[v]}</button>)}</div></aside>; }

@@ -1,0 +1,4 @@
+[[permission]]
+identifier="desktop-bootstrap"
+description="Allows the Prometheus Desktop main window to invoke the bounded desktop bootstrap command."
+commands.allow=["desktop_bootstrap"]

@@ -1,0 +1,1 @@
+export function PrometheusMark(){return <svg width="22" height="22" viewBox="0 0 22 22" aria-label="Prometheus mark"><circle cx="11" cy="11" r="8" fill="none" stroke="currentColor" opacity=".5"/><circle cx="11" cy="11" r="3" fill="var(--color-ember)"/></svg>}

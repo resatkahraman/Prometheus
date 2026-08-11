@@ -41,5 +41,18 @@
 - [x] TASK-069: Canonical Post-Promotion Verification
 - [x] TASK-070: Canonical Human Git Integration Approval
 - [x] TASK-071: Canonical Supervised Local Git Integration
-- Next major stage: DESKTOP-001 - Prometheus Native Command Center Foundation
+- [x] DESKTOP-001: Prometheus Native Command Center Foundation
+- [ ] DESKTOP-PKG-001: Windows Development Packaging - next
+- [ ] DESKTOP-002: Secure Core Transport and Live Command Surface
+-
+## PROMETHEUS DESKTOP
+- [x] DESKTOP-001: Native Command Center Foundation
+- [ ] DESKTOP-PKG-001: Windows Development Packaging - next
+- [ ] DESKTOP-002: Secure Core Transport and Live Command Surface
+- DESKTOP-003: Projects and Missions
+- DESKTOP-004: Approvals and Change Review
+- DESKTOP-005: Activity, Receipts and Memory
+- DESKTOP-006: Agents and Model Control
+- DESKTOP-007: Native OS Integration
+- DESKTOP-008: Packaging, Polish and Release
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
