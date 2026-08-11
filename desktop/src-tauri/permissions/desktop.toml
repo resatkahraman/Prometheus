@@ -27,3 +27,8 @@ commands.allow=["desktop_approve_task","desktop_reject_task"]
 identifier="desktop-approval-review"
 description="Allows the Prometheus Desktop main window to read bounded canonical approval review evidence."
 commands.allow=["desktop_approval_review"]
+
+[[permission]]
+identifier="desktop-history-read"
+description="Allows the Prometheus Desktop main window to read bounded canonical activity, receipts and memory."
+commands.allow=["desktop_mission_history","desktop_mission_receipts","desktop_mission_memory"]

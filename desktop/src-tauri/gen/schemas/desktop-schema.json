@@ -201,6 +201,12 @@
           "markdownDescription": "Allows the Prometheus Desktop main window to read bounded local Core status."
         },
         {
+          "description": "Allows the Prometheus Desktop main window to read bounded canonical activity, receipts and memory.",
+          "type": "string",
+          "const": "desktop-history-read",
+          "markdownDescription": "Allows the Prometheus Desktop main window to read bounded canonical activity, receipts and memory."
+        },
+        {
           "description": "Allows the Prometheus Desktop main window to read canonical mission state and activity.",
           "type": "string",
           "const": "desktop-mission-read",

@@ -1819,6 +1819,29 @@ async def read_desktop_approval_review(
     )
 
 
+@app.get(
+    "/v1/desktop/commands/{command_id}/memory",
+    response_model=DecisionMemoryPage,
+    tags=["desktop"],
+)
+async def read_desktop_mission_memory(command_id: str, response: Response) -> DecisionMemoryPage:
+    """Read project-scoped canonical Decision Memory for one exact mission."""
+    try:
+        command = await app.state.supervisor.get(command_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Mission bulunamadı.") from exc
+    if command.id != command_id:
+        raise HTTPException(status_code=404, detail="Mission kimliği doğrulanamadı.")
+    try:
+        result = app.state.decision_memory.list(workspace_path=command.workspace_path, active_only=True, limit=50)
+    except DecisionMemoryIntegrityError as exc:
+        raise HTTPException(status_code=409, detail="Decision Memory bütünlüğü doğrulanamadı.") from exc
+    except DecisionMemoryError as exc:
+        raise HTTPException(status_code=503, detail="Decision Memory kullanılamıyor.") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
 @app.post(
     "/v1/supervisor/commands/{command_id}/revert",
     response_model=RunRevertResponse,
