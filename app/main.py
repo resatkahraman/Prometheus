@@ -69,6 +69,7 @@ from app.core.schemas import (
     ProjectRunCommitRequest,
     ProjectRunCommitResponse,
     RunChangeReviewResponse,
+    DesktopApprovalReviewResponse,
     RunRevertRequest,
     RunRevertResponse,
     WorkspaceProjectsResponse,
@@ -1756,6 +1757,66 @@ async def read_supervisor_change_review(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get(
+    "/v1/desktop/commands/{command_id}/approvals/{approval_id}/review",
+    response_model=DesktopApprovalReviewResponse,
+    tags=["desktop"],
+)
+async def read_desktop_approval_review(
+    command_id: str,
+    approval_id: str,
+) -> DesktopApprovalReviewResponse:
+    """Return bounded canonical approval evidence without reading repository files."""
+    try:
+        command = await app.state.supervisor.get(command_id)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail="Mission bulunamadı.") from exc
+    if command.id != command_id:
+        raise HTTPException(status_code=404, detail="Mission kimliği doğrulanamadı.")
+    if not approval_id or len(approval_id) > 160:
+        raise HTTPException(status_code=404, detail="Onay bulunamadı.")
+    task = next((item for item in command.tasks if item.approval_id == approval_id), None)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Onay bu mission'a bağlı değil.")
+    if task.approval_state != "pending":
+        raise HTTPException(status_code=409, detail="Onay artık beklemede değil.")
+    preview = task.approval_preview if isinstance(task.approval_preview, dict) else None
+    truncated = False
+    if preview is not None:
+        encoded = json.dumps(preview, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) > 120_000:
+            preview = {"summary": "Canonical review exceeds the bounded preview size."}
+            truncated = True
+    affected = []
+    operation_kinds = []
+    if preview:
+        raw_files = preview.get("affected_files", preview.get("files", []))
+        if isinstance(raw_files, list):
+            affected = [str(value)[:400] for value in raw_files[:100]]
+            truncated = truncated or len(raw_files) > 100
+        raw_operations = preview.get("operations", [])
+        if isinstance(raw_operations, list):
+            operation_kinds = [str(item.get("kind", item.get("type", "unknown")))[:80] for item in raw_operations[:100] if isinstance(item, dict)]
+            truncated = truncated or len(raw_operations) > 100
+    return DesktopApprovalReviewResponse(
+        mission_id=command.id,
+        task_id=task.id,
+        approval_id=task.approval_id,
+        approval_version=task.approval_version,
+        approval_state=task.approval_state,
+        approval_type=task.approval_tool,
+        title=task.title,
+        reason=task.approval_description,
+        requested_action=task.approval_tool,
+        affected_files=affected,
+        operation_count=len(preview.get("operations", [])) if isinstance(preview, dict) and isinstance(preview.get("operations"), list) else None,
+        operation_kinds=operation_kinds,
+        preview=preview,
+        truncated=truncated,
+        unavailable_reason=None if preview is not None else "No detailed preview is available for this approval.",
+    )
 
 
 @app.post(

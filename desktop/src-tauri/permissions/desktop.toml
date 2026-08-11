@@ -22,3 +22,8 @@ commands.allow=["desktop_mission","desktop_mission_events"]
 identifier="desktop-approval-decision"
 description="Allows the Prometheus Desktop main window to submit an explicitly bound approval decision."
 commands.allow=["desktop_approve_task","desktop_reject_task"]
+
+[[permission]]
+identifier="desktop-approval-review"
+description="Allows the Prometheus Desktop main window to read bounded canonical approval review evidence."
+commands.allow=["desktop_approval_review"]

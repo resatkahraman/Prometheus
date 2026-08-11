@@ -32,6 +32,9 @@ pub struct MissionEventView { pub sequence: u64, pub event_type: String, pub mes
 #[derive(Clone, Deserialize, Serialize)]
 pub struct MissionEventsView { pub mission_id: String, pub events: Vec<MissionEventView>, pub count: u64, pub has_more: bool }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct ApprovalReviewView { pub mission_id: String, pub task_id: String, pub approval_id: String, pub approval_version: u32, pub approval_state: String, pub approval_type: Option<String>, pub title: Option<String>, pub reason: Option<String>, pub requested_action: Option<String>, pub risk_category: Option<String>, pub affected_files: Vec<String>, pub operation_count: Option<u32>, pub operation_kinds: Vec<String>, pub plan_id: Option<String>, pub preview_id: Option<String>, pub approval_binding_id: Option<String>, pub digests: std::collections::HashMap<String, String>, pub evidence: Vec<serde_json::Value>, pub preview: Option<serde_json::Value>, pub truncated: bool, pub unavailable_reason: Option<String> }
+
 #[derive(Serialize)]
 struct ApprovalDecisionRequest { approval_id: String, approval_version: u32, background: bool }
 
@@ -66,6 +69,11 @@ fn task_path(mission_id: &str, task_id: &str, action: &str) -> Result<String, Tr
     Ok(mission_path(mission_id, &format!("/tasks/{task_id}/{action}"))?)
 }
 
+fn review_path(mission_id: &str, approval_id: &str) -> Result<String, TransportFailure> {
+    if !valid_segment(approval_id) { return Err(TransportFailure { code: "invalid_identifier", message: "Onay kimliği geçersiz." }); }
+    mission_path(mission_id, &format!("/approvals/{approval_id}/review"))
+}
+
 async fn response_json<T: for<'de> Deserialize<'de>>(response: reqwest::Response) -> Result<T, TransportFailure> {
     let status = response.status();
     let body = bounded_body(response).await?;
@@ -86,6 +94,13 @@ pub async fn mission(mission_id: String) -> Result<MissionView, TransportFailure
 pub async fn mission_events(mission_id: String) -> Result<MissionEventsView, TransportFailure> {
     let client = client(Duration::from_secs(10))?;
     let path = mission_path(&mission_id, "/mission-events?limit=50").map_err(|_| TransportFailure { code: "invalid_identifier", message: "Mission kimliği geçersiz." })?;
+    let response = auth_header(client.get(path)).send().await.map_err(|_| TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi." })?;
+    response_json(response).await
+}
+
+pub async fn approval_review(mission_id: String, approval_id: String) -> Result<ApprovalReviewView, TransportFailure> {
+    let client = client(Duration::from_secs(10))?;
+    let path = review_path(&mission_id, &approval_id).map_err(|_| TransportFailure { code: "invalid_identifier", message: "Mission veya onay kimliği geçersiz." })?;
     let response = auth_header(client.get(path)).send().await.map_err(|_| TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi." })?;
     response_json(response).await
 }
@@ -141,5 +156,5 @@ mod tests {
     #[test] fn default_port_is_loopback_contract() { assert_eq!(resolve_port(None), 8765); assert!(endpoint("/v1/health").starts_with("http://127.0.0.1:")); }
     #[test] fn port_override_is_bounded() { assert_eq!(resolve_port(Some("4321")), 4321); assert_eq!(resolve_port(Some("80")), 8765); assert_eq!(resolve_port(Some("65536")), 8765); assert_eq!(resolve_port(Some("nope")), 8765); }
     #[test] fn canonical_endpoints_are_loopback_only() { assert_eq!(CORE_HOST, "127.0.0.1"); assert_eq!(endpoint("/v1/health"), "http://127.0.0.1:8765/v1/health"); assert_eq!(endpoint("/v1/desktop/command"), "http://127.0.0.1:8765/v1/desktop/command"); }
-    #[test] fn mission_and_approval_paths_are_bounded() { assert!(mission_path("mission-1", "").unwrap().ends_with("/mission-1")); assert!(task_path("mission-1", "task-1", "approve").unwrap().ends_with("/tasks/task-1/approve")); assert!(mission_path("../escape", "").is_err()); assert!(task_path("mission-1", "task/escape", "reject").is_err()); assert!(valid_segment("approval-1")); assert!(!valid_segment("")); }
+    #[test] fn mission_and_approval_paths_are_bounded() { assert!(mission_path("mission-1", "").unwrap().ends_with("/mission-1")); assert!(task_path("mission-1", "task-1", "approve").unwrap().ends_with("/tasks/task-1/approve")); assert!(review_path("mission-1", "approval-1").unwrap().ends_with("/approvals/approval-1/review")); assert!(mission_path("../escape", "").is_err()); assert!(task_path("mission-1", "task/escape", "reject").is_err()); assert!(review_path("mission-1", "approval/escape").is_err()); assert!(valid_segment("approval-1")); assert!(!valid_segment("")); }
 }

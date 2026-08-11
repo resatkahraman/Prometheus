@@ -183,6 +183,12 @@
           "markdownDescription": "Allows the Prometheus Desktop main window to submit an explicitly bound approval decision."
         },
         {
+          "description": "Allows the Prometheus Desktop main window to read bounded canonical approval review evidence.",
+          "type": "string",
+          "const": "desktop-approval-review",
+          "markdownDescription": "Allows the Prometheus Desktop main window to read bounded canonical approval review evidence."
+        },
+        {
           "description": "Allows the Prometheus Desktop main window to invoke the bounded desktop bootstrap command.",
           "type": "string",
           "const": "desktop-bootstrap",

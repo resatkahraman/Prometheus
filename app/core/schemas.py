@@ -518,6 +518,30 @@ class RunChangeReviewResponse(BaseModel):
     revert_confirmation: str
 
 
+class DesktopApprovalReviewResponse(BaseModel):
+    mission_id: str
+    task_id: str
+    approval_id: str
+    approval_version: int
+    approval_state: str
+    approval_type: str | None = None
+    title: str | None = None
+    reason: str | None = None
+    requested_action: str | None = None
+    risk_category: str | None = None
+    affected_files: list[str] = Field(default_factory=list)
+    operation_count: int | None = None
+    operation_kinds: list[str] = Field(default_factory=list)
+    plan_id: str | None = None
+    preview_id: str | None = None
+    approval_binding_id: str | None = None
+    digests: dict[str, str] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    preview: dict[str, Any] | None = None
+    truncated: bool = False
+    unavailable_reason: str | None = None
+
+
 class RunRevertRequest(BaseModel):
     confirmation: str
 
