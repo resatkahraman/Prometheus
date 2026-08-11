@@ -36,4 +36,6 @@
 - [x] TASK-064: Canonical Explicit Human Decision Binding
 - [~] TASK-065: Canonical Supervised Promotion Authority - implemented; validation pending user-run tests
 - [x] TASK-066: Canonical Approved Candidate Safe Patch Binding
+- [x] TASK-067: Canonical Promotion Execution Receipt and Replay Contract
+- [ ] TASK-068: Canonical Supervised Promotion Execution - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
