@@ -39,5 +39,6 @@
 - [x] TASK-067: Canonical Promotion Execution Receipt and Replay Contract
 - [x] TASK-068: Canonical Supervised Promotion Execution
 - [x] TASK-069: Canonical Post-Promotion Verification
-- [ ] TASK-070: Supervised Git integration authority and execution - next
+- [x] TASK-070: Canonical Human Git Integration Approval
+- [ ] TASK-071: Canonical Supervised Local Git Integration - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
