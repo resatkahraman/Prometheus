@@ -38,5 +38,6 @@
 - [x] TASK-066: Canonical Approved Candidate Safe Patch Binding
 - [x] TASK-067: Canonical Promotion Execution Receipt and Replay Contract
 - [x] TASK-068: Canonical Supervised Promotion Execution
-- [ ] TASK-069: Post-promotion verification and supervised integration - next
+- [x] TASK-069: Canonical Post-Promotion Verification
+- [ ] TASK-070: Supervised Git integration authority and execution - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution
