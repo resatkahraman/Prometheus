@@ -42,12 +42,12 @@
 - [x] TASK-070: Canonical Human Git Integration Approval
 - [x] TASK-071: Canonical Supervised Local Git Integration
 - [x] DESKTOP-001: Prometheus Native Command Center Foundation
-- [ ] DESKTOP-PKG-001: Windows Development Packaging - next
+- [x] DESKTOP-PKG-001: Windows Development Packaging
 - [ ] DESKTOP-002: Secure Core Transport and Live Command Surface
 -
 ## PROMETHEUS DESKTOP
 - [x] DESKTOP-001: Native Command Center Foundation
-- [ ] DESKTOP-PKG-001: Windows Development Packaging - next
+- [x] DESKTOP-PKG-001: Windows Development Packaging
 - [ ] DESKTOP-002: Secure Core Transport and Live Command Surface
 - DESKTOP-003: Projects and Missions
 - DESKTOP-004: Approvals and Change Review
