@@ -183,6 +183,18 @@
           "markdownDescription": "Allows the Prometheus Desktop main window to invoke the bounded desktop bootstrap command."
         },
         {
+          "description": "Allows the Prometheus Desktop main window to read bounded local Core status.",
+          "type": "string",
+          "const": "desktop-core-status",
+          "markdownDescription": "Allows the Prometheus Desktop main window to read bounded local Core status."
+        },
+        {
+          "description": "Allows the Prometheus Desktop main window to submit a bounded command to the local Core.",
+          "type": "string",
+          "const": "desktop-submit-command",
+          "markdownDescription": "Allows the Prometheus Desktop main window to submit a bounded command to the local Core."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

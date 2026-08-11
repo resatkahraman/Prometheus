@@ -42,6 +42,8 @@ from app.core.schemas import (
     AgentRequest,
     AgentResponse,
     ChatMessage,
+    DesktopCommandRequest,
+    DesktopCommandResponse,
     HealthResponse,
     ModelCatalogResponse,
     OperationsStatusResponse,
@@ -1664,6 +1666,43 @@ async def create_supervisor_command(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post(
+    "/v1/desktop/command",
+    response_model=DesktopCommandResponse,
+    tags=["desktop"],
+)
+async def submit_desktop_command(
+    request: DesktopCommandRequest,
+    http_request: Request,
+) -> DesktopCommandResponse:
+    if not is_local_http_request(http_request):
+        raise HTTPException(status_code=403, detail="Desktop Core yalnızca loopback üzerinden kullanılabilir.")
+    try:
+        command = await app.state.supervisor.create(
+            goal=request.message,
+            auto_start=False,
+            background=True,
+            autonomy_mode="task",
+            workspace_path=None,
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    requires_approval = any(
+        task.status == "awaiting_approval" or task.approval_state == "pending"
+        for task in command.tasks
+    ) or any(decision.status == "pending" for decision in command.decisions)
+    summary = command.operation_message or command.plan_text or command.failure_reason
+    return DesktopCommandResponse(
+        status=command.status,
+        mission_id=command.id,
+        summary=summary,
+        requires_approval=requires_approval,
+    )
 
 
 @app.post(

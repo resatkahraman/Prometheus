@@ -1,2 +1,20 @@
-import {invoke} from '@tauri-apps/api/core'; import type {DesktopBootstrap,CoreConnectionState} from '../types/desktop';
-export async function bootstrap():Promise<{state:CoreConnectionState;data:DesktopBootstrap}> { if(!('__TAURI_INTERNALS__' in window)) return {state:'preview',data:{revision:'prometheus-desktop-bridge-v1',product:'Prometheus',surface:'desktop',native:false,core:{state:'preview',detail:'Core transport is not configured in DESKTOP-001.'},authority:{webviewFilesystem:false,webviewShell:false,webviewProcess:false,webviewRemoteNetwork:false,canonicalAuthority:'prometheus-core'}}}; try{return {state:'native_ready',data:await invoke<DesktopBootstrap>('desktop_bootstrap')}}catch{return {state:'native_error',data:{revision:'prometheus-desktop-bridge-v1',product:'Prometheus',surface:'desktop',native:true,core:{state:'native_error',detail:'Native bootstrap failed.'},authority:{webviewFilesystem:false,webviewShell:false,webviewProcess:false,webviewRemoteNetwork:false,canonicalAuthority:'prometheus-core'}}}}}
+import { invoke } from '@tauri-apps/api/core';
+import type { CoreStatus, DesktopBootstrap, DesktopCommandResponse } from '../types/desktop';
+
+const native = () => '__TAURI_INTERNALS__' in window;
+const previewStatus: CoreStatus = { state: 'preview', code: 'preview', message: 'Core transport is available only in the native application.' };
+
+export async function getDesktopBootstrap(): Promise<DesktopBootstrap> {
+  if (!native()) return { revision: 'prometheus-desktop-bridge-v2', product: 'Prometheus', surface: 'desktop', native: false, core: { state: 'preview', detail: previewStatus.message }, authority: { webviewFilesystem: false, webviewShell: false, webviewProcess: false, webviewRemoteNetwork: false, canonicalAuthority: 'prometheus-core' } };
+  return invoke<DesktopBootstrap>('desktop_bootstrap');
+}
+
+export async function getDesktopCoreStatus(): Promise<CoreStatus> {
+  if (!native()) return previewStatus;
+  return invoke<CoreStatus>('desktop_core_status');
+}
+
+export async function submitDesktopCommand(message: string): Promise<DesktopCommandResponse> {
+  if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' };
+  return invoke<DesktopCommandResponse>('desktop_submit_command', { message });
+}

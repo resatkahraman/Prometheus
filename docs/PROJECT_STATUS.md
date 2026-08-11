@@ -1,18 +1,21 @@
 # Prometheus Project Status
 
-Current phase: Prometheus Desktop / Native Command Center
+Current phase: Prometheus Desktop / Secure Core Transport
 Last completed task: DESKTOP-001 - Prometheus Native Command Center Foundation
 DESKTOP-001 status: Completed and validated
 Baseline before DESKTOP-001: 306d62f0a136e2b096f8ad9e73726fa3807d1162
 Implementation commit: The Git commit containing this status update
 TASK-059 Canonical Self-Development Proposal completed. Prometheus now has a deterministic, immutable, project-bound and evidence-referenced proposal primitive for supervised self-development. Proposals are proposal-only and cannot execute, promote, mutate main, or prove human approval. Source-patch proposals bind authorized existing source/test targets through RepositoryMap and ScopeLock while intentionally containing no executable edit payload.
 Current product task: DESKTOP-002 - Secure Core Transport and Live Command Surface
+DESKTOP-002 status: Implementation complete and automated-validated; manual Desktop acceptance deferred until the complete Desktop task series is finished.
 DESKTOP-PKG-001 status: COMPLETE
-Next architectural stage: DESKTOP-002 - Secure Core Transport and Live Command Surface
+Next architectural stage: bounded Desktop runtime lifecycle step, then DESKTOP-003 - Projects and Missions
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
 Warning: pre-existing Starlette/httpx TestClient deprecation warning.
 Pandora: Core completed through TASK-039; further development intentionally deferred.
+
+DESKTOP-002 automated validation: targeted Python 6 passed; focused Python 28 passed with 1 warning; Rust unit tests 3 passed; cargo check passed; npm.cmd ci installed 73 packages with 0 vulnerabilities; frontend production build passed; final full Python suite 949 passed with 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual Desktop acceptance is deferred until the complete Desktop task series is finished. DESKTOP-002 does not auto-start Prometheus Core; native packaged Core lifecycle remains a later bounded Desktop runtime concern.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)

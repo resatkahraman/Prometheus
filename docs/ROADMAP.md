@@ -43,12 +43,13 @@
 - [x] TASK-071: Canonical Supervised Local Git Integration
 - [x] DESKTOP-001: Prometheus Native Command Center Foundation
 - [x] DESKTOP-PKG-001: Windows Development Packaging
-- [ ] DESKTOP-002: Secure Core Transport and Live Command Surface
+- [x] DESKTOP-002: Secure Core Transport and Live Command Surface - automated validation passed; manual acceptance deferred
 -
 ## PROMETHEUS DESKTOP
 - [x] DESKTOP-001: Native Command Center Foundation
 - [x] DESKTOP-PKG-001: Windows Development Packaging
-- [ ] DESKTOP-002: Secure Core Transport and Live Command Surface
+- [x] DESKTOP-002: Secure Core Transport and Live Command Surface - automated validation passed; manual acceptance deferred
+- [ ] DESKTOP-RUNTIME-001: Bounded Core Runtime Lifecycle
 - DESKTOP-003: Projects and Missions
 - DESKTOP-004: Approvals and Change Review
 - DESKTOP-005: Activity, Receipts and Memory

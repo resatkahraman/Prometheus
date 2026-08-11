@@ -377,6 +377,24 @@ class SupervisorCreateRequest(BaseModel):
         return self
 
 
+class DesktopCommandRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=20_000)
+
+    @model_validator(mode="after")
+    def normalize_message(self) -> "DesktopCommandRequest":
+        self.message = self.message.strip()
+        if not self.message:
+            raise ValueError("message cannot be empty.")
+        return self
+
+
+class DesktopCommandResponse(BaseModel):
+    status: str
+    mission_id: str
+    summary: str | None = None
+    requires_approval: bool = False
+
+
 class SupervisorDecisionRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=4_000)
     replan_when_complete: bool = True

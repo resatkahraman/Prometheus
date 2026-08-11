@@ -2,3 +2,13 @@
 identifier="desktop-bootstrap"
 description="Allows the Prometheus Desktop main window to invoke the bounded desktop bootstrap command."
 commands.allow=["desktop_bootstrap"]
+
+[[permission]]
+identifier="desktop-core-status"
+description="Allows the Prometheus Desktop main window to read bounded local Core status."
+commands.allow=["desktop_core_status"]
+
+[[permission]]
+identifier="desktop-submit-command"
+description="Allows the Prometheus Desktop main window to submit a bounded command to the local Core."
+commands.allow=["desktop_submit_command"]
