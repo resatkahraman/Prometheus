@@ -55,5 +55,6 @@
 - [x] DESKTOP-005: Activity, Receipts and Memory - automated validation passed; manual acceptance deferred
 - [x] DESKTOP-006: Agents and Model Control
 - [x] DESKTOP-007: Native OS Integration
-- DESKTOP-008: Packaging, Polish and Release
+- [x] DESKTOP-008: Packaging, Polish and Release
+- [ ] DESKTOP-FINAL-ACCEPTANCE: Comprehensive Manual End-to-End Acceptance Test - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution

@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
+    "icon": ["icons/icon.ico", "icons/128x128.png", "icons/128x128@2x.png"],
     "targets": ["nsis"],
     "windows": {
       "nsis": {

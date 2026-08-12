@@ -1,6 +1,6 @@
 # Prometheus Project Status
 
-Current phase: Prometheus Desktop / Native OS Integration
+Current phase: Prometheus Desktop / Packaging, Polish and Release
 Last completed task: DESKTOP-001 - Prometheus Native Command Center Foundation
 DESKTOP-001 status: Completed and validated
 Baseline before DESKTOP-001: 306d62f0a136e2b096f8ad9e73726fa3807d1162
@@ -11,8 +11,8 @@ DESKTOP-002 status: Implementation complete and automated-validated; manual Desk
 DESKTOP-PKG-001 status: COMPLETE
 Previous Desktop task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
 DESKTOP-006 status: Completed and validated.
-Current Desktop task: DESKTOP-007 - Native OS Integration completed and validated.
-Next architectural stage: DESKTOP-008 - Packaging, Polish and Release
+Current Desktop task: DESKTOP-008 - Packaging, Polish and Release completed and automated-validated.
+Next architectural stage: DESKTOP-FINAL-ACCEPTANCE - Comprehensive Manual End-to-End Acceptance Test
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
 Warning: pre-existing Starlette/httpx TestClient deprecation warning.
@@ -31,6 +31,8 @@ DESKTOP-RUNTIME-001 adds bounded native ownership of the exact Core child starte
 DESKTOP-006 adds centralized capability-aware model inventory and routing visibility for `gemma4:e4b-it-qat`, `embeddinggemma:300m-qat-q4_0` and `ministral-3:3b`. Qwen3.5 4B/9B are retired as active generation defaults. Embedding provenance records model and dimensions; incompatible legacy vector spaces are excluded and reported as rebuild-required without automatic destructive migration. Ollama availability is read-only and distinguishes available, not installed, unavailable and provider error. Model output remains untrusted and cannot bypass canonical approval, workspace or execution authority. Targeted validation: 5 passed; focused regression: 36 passed; npm ci: 73 packages, 0 vulnerabilities; frontend build: PASS; Rust unit tests: 6 passed; cargo check: PASS; final full Python suite: 975 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning.
 
 DESKTOP-007 adds a deny-by-default native OS boundary implemented as dedicated typed Tauri commands. Safe coarse environment metadata, exact user-selected path reveal, 64 KiB text clipboard operations, bounded notifications, single file/folder dialogs and credential-free HTTPS browser handoff are available. General file opening is intentionally unavailable. Webview plugin permissions, arbitrary shell/process execution, autonomous input/screen control and model-to-native authority remain denied. Targeted native validation: 9 passed; focused regression: 32 passed, 1 warning; npm ci: 73 packages, 0 vulnerabilities; frontend build: PASS; Rust unit tests: 15 passed; cargo check: PASS; final full Python suite: 975 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning.
+
+DESKTOP-008 finalizes the Windows release-candidate shell at version `0.1.0`. The canonical NSIS artifact is `Prometheus_0.1.0_x64-setup.exe` (2,691,188 bytes; SHA-256 `AE02EB3B5ED54F9E0DA8AB80241EB3CCE496F43982E88F8A05B681845EF3EDDF`). It is intentionally unsigned: Windows code signing and updater infrastructure are not configured. The package does not bundle Ollama or local models and does not download them automatically. The Desktop remains an honest release-candidate shell requiring the canonical workspace-managed Python Core runtime; it does not discover arbitrary Python installations. Release diagnostics surface that requirement, signing state and updater state without exposing secrets. Automated validation passed; installer execution and comprehensive end-to-end acceptance are intentionally deferred to `DESKTOP-FINAL-ACCEPTANCE`.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)
