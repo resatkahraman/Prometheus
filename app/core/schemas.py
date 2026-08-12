@@ -139,6 +139,27 @@ class ModelCatalogResponse(BaseModel):
     models: list[CatalogModel]
 
 
+class DesktopModelProfile(BaseModel):
+    route_key: str
+    canonical_id: str
+    display_name: str
+    provider: str
+    local: bool
+    model_class: str
+    capabilities: list[str]
+    enabled: bool
+    configured: bool
+    availability: str
+    cost_class: str
+    configured_context_tokens: int | None = None
+
+
+class DesktopModelCatalogResponse(BaseModel):
+    models: list[DesktopModelProfile]
+    agents: list[dict[str, object]]
+    routing_information: str
+
+
 class RouteUsage(BaseModel):
     route_key: str
     provider: str

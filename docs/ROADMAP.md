@@ -53,7 +53,7 @@
 - [x] DESKTOP-003: Native Mission Control and Approval Surface - automated validation passed; manual acceptance deferred
 - [x] DESKTOP-004: Approvals and Change Review - automated validation passed; manual acceptance deferred
 - [x] DESKTOP-005: Activity, Receipts and Memory - automated validation passed; manual acceptance deferred
-- DESKTOP-006: Agents and Model Control
+- [x] DESKTOP-006: Agents and Model Control
 - DESKTOP-007: Native OS Integration
 - DESKTOP-008: Packaging, Polish and Release
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution

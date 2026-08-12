@@ -14,6 +14,11 @@ pub enum CoreState { NotRunning, Ready, AuthRequired, ProtocolError, CoreError }
 #[derive(Clone, Serialize)]
 pub struct CoreStatus { pub state: CoreState, pub code: String, pub message: String }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct DesktopModelProfile { pub route_key: String, pub canonical_id: String, pub display_name: String, pub provider: String, pub local: bool, pub model_class: String, pub capabilities: Vec<String>, pub enabled: bool, pub configured: bool, pub availability: String, pub cost_class: String, pub configured_context_tokens: Option<u32> }
+#[derive(Clone, Deserialize, Serialize)]
+pub struct DesktopModelCatalog { pub models: Vec<DesktopModelProfile>, pub agents: Vec<serde_json::Value>, pub routing_information: String }
+
 #[derive(Serialize)]
 pub struct DesktopCommandRequest { pub message: String }
 
@@ -143,6 +148,12 @@ pub async fn health() -> CoreStatus {
     if response.status() == StatusCode::UNAUTHORIZED { return CoreStatus { state: CoreState::AuthRequired, code: "auth_required".to_string(), message: "Core kimlik doğrulaması gerekli.".to_string() }; }
     if !response.status().is_success() { return CoreStatus { state: CoreState::ProtocolError, code: "protocol_error".to_string(), message: "Core beklenmeyen bir yanıt verdi.".to_string() }; }
     match bounded_body(response).await { Ok(_) => CoreStatus { state: CoreState::Ready, code: "ready".to_string(), message: "Core hazır.".to_string() }, Err(error) => error.status() }
+}
+
+pub async fn desktop_model_catalog() -> Result<DesktopModelCatalog, TransportFailure> {
+    let client = client(Duration::from_secs(10))?;
+    let response = auth_header(client.get(endpoint("/v1/desktop/model-catalog"))).send().await.map_err(|_| TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi." })?;
+    response_json(response).await
 }
 
 pub async fn submit(message: String) -> Result<DesktopCommandResponse, TransportFailure> {

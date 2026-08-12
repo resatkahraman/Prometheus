@@ -14,6 +14,11 @@ description="Allows the Prometheus Desktop main window to inspect and explicitly
 commands.allow=["desktop_runtime_status","desktop_start_core","desktop_stop_core"]
 
 [[permission]]
+identifier="desktop-model-catalog"
+description="Allows the Prometheus Desktop main window to read bounded canonical model and agent metadata."
+commands.allow=["desktop_model_catalog"]
+
+[[permission]]
 identifier="desktop-submit-command"
 description="Allows the Prometheus Desktop main window to submit a bounded command to the local Core."
 commands.allow=["desktop_submit_command"]

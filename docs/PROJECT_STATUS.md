@@ -1,6 +1,6 @@
 # Prometheus Project Status
 
-Current phase: Prometheus Desktop / Secure Core Transport
+Current phase: Prometheus Desktop / Agents and Model Control
 Last completed task: DESKTOP-001 - Prometheus Native Command Center Foundation
 DESKTOP-001 status: Completed and validated
 Baseline before DESKTOP-001: 306d62f0a136e2b096f8ad9e73726fa3807d1162
@@ -9,8 +9,9 @@ TASK-059 Canonical Self-Development Proposal completed. Prometheus now has a det
 Current product task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
 DESKTOP-002 status: Implementation complete and automated-validated; manual Desktop acceptance deferred until the complete Desktop task series is finished.
 DESKTOP-PKG-001 status: COMPLETE
-Current Desktop task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
-Next architectural stage: DESKTOP-006 - Agents and Model Control
+Previous Desktop task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
+Current Desktop task: DESKTOP-006 - Agents and Model Control completed and validated.
+Next architectural stage: DESKTOP-007 - Native OS Integration
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
 Warning: pre-existing Starlette/httpx TestClient deprecation warning.
@@ -25,6 +26,8 @@ DESKTOP-004 adds an exact mission-plus-approval review surface over canonical Co
 DESKTOP-005 adds read-only canonical Activity, Receipts, Mission History and Decision Memory surfaces bound to the selected mission/project. Targeted Desktop suite: 27 passed; focused canonical regression: 133 passed, 1 warning; Rust unit tests: 4 passed; cargo check: PASS; npm.cmd ci: 73 packages, 0 vulnerabilities; frontend production build: PASS; final full Python suite: 970 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual acceptance remains deferred until the complete Desktop task series is finished.
 
 DESKTOP-RUNTIME-001 adds bounded native ownership of the exact Core child started by Desktop. External, authentication-required and port-conflict Core instances remain unmanaged and cannot be stopped. Start is explicit and bounded; no shell, PID authority, auto-start or auto-restart exists. Targeted Python validation: 27 passed; Rust unit tests: 6 passed; cargo check: PASS; npm.cmd ci: 73 packages, 0 vulnerabilities; frontend build: PASS; final full Python suite: 970 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning. Manual acceptance remains deferred until the complete Desktop task series is finished.
+
+DESKTOP-006 adds centralized capability-aware model inventory and routing visibility for `gemma4:e4b-it-qat`, `embeddinggemma:300m-qat-q4_0` and `ministral-3:3b`. Qwen3.5 4B/9B are retired as active generation defaults. Embedding provenance records model and dimensions; incompatible legacy vector spaces are excluded and reported as rebuild-required without automatic destructive migration. Ollama availability is read-only and distinguishes available, not installed, unavailable and provider error. Model output remains untrusted and cannot bypass canonical approval, workspace or execution authority. Targeted validation: 5 passed; focused regression: 36 passed; npm ci: 73 packages, 0 vulnerabilities; frontend build: PASS; Rust unit tests: 6 passed; cargo check: PASS; final full Python suite: 975 passed, 1 warning. The warning is the pre-existing Starlette/httpx TestClient deprecation warning.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)

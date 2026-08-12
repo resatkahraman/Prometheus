@@ -170,3 +170,22 @@ class OllamaProvider(AIProvider):
             raw_usage=raw_usage,
             finish_reason=done_reason or None,
         )
+
+    async def availability(self, model: str) -> str:
+        """Bounded, read-only model probe; never downloads or starts Ollama."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/api/tags",
+                timeout=httpx.Timeout(3.0, connect=1.0),
+            )
+            response.raise_for_status()
+            payload = response.json()
+            models = payload.get("models")
+            if not isinstance(models, list) or not all(isinstance(item, dict) for item in models):
+                return "error"
+            names = {str(item.get("name") or item.get("model")) for item in models}
+            return "available" if model in names else "not_installed"
+        except httpx.ConnectError:
+            return "unavailable"
+        except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+            return "error"

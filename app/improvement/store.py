@@ -50,6 +50,8 @@ class ImprovementStore:
                     kind TEXT NOT NULL,
                     content TEXT NOT NULL,
                     embedding_json TEXT,
+                    embedding_model TEXT,
+                    embedding_dimensions INTEGER,
                     hits INTEGER NOT NULL DEFAULT 0,
                     verified_successes INTEGER NOT NULL DEFAULT 0,
                     verified_failures INTEGER NOT NULL DEFAULT 0,
@@ -136,6 +138,11 @@ class ImprovementStore:
                 );
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(orientation_entries)").fetchall()}
+            if "embedding_model" not in columns:
+                connection.execute("ALTER TABLE orientation_entries ADD COLUMN embedding_model TEXT")
+            if "embedding_dimensions" not in columns:
+                connection.execute("ALTER TABLE orientation_entries ADD COLUMN embedding_dimensions INTEGER")
             connection.commit()
 
     async def upsert_orientation(
@@ -147,6 +154,7 @@ class ImprovementStore:
         kind: str,
         content: str,
         embedding: list[float] | None = None,
+        embedding_model: str | None = None,
     ) -> str:
         await self.initialize()
         if not self.enabled:
@@ -159,6 +167,7 @@ class ImprovementStore:
             kind,
             content,
             embedding,
+            embedding_model,
         )
 
     def _upsert_orientation_sync(
@@ -169,6 +178,7 @@ class ImprovementStore:
         kind: str,
         content: str,
         embedding: list[float] | None,
+        embedding_model: str | None,
     ) -> str:
         entry_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{project_key}:{path}:{kind}"))
         with self._connect() as connection:
@@ -176,14 +186,22 @@ class ImprovementStore:
                 """
                 INSERT INTO orientation_entries(
                     id, project_key, path, source_sha256, kind, content,
-                    embedding_json, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    embedding_json, embedding_model, embedding_dimensions, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_key, path, kind) DO UPDATE SET
                     source_sha256=excluded.source_sha256,
                     content=excluded.content,
                     embedding_json=COALESCE(
                         excluded.embedding_json,
                         orientation_entries.embedding_json
+                    ),
+                    embedding_model=COALESCE(
+                        excluded.embedding_model,
+                        orientation_entries.embedding_model
+                    ),
+                    embedding_dimensions=COALESCE(
+                        excluded.embedding_dimensions,
+                        orientation_entries.embedding_dimensions
                     ),
                     updated_at=excluded.updated_at
                 """,
@@ -195,6 +213,8 @@ class ImprovementStore:
                     kind,
                     content,
                     json.dumps(embedding) if embedding else None,
+                    embedding_model,
+                    len(embedding) if embedding else None,
                     _utc_now(),
                 ),
             )
@@ -266,6 +286,7 @@ class ImprovementStore:
         self,
         entry_id: str,
         embedding: list[float],
+        embedding_model: str,
     ) -> None:
         await self.initialize()
         if not self.enabled or not entry_id or not embedding:
@@ -274,18 +295,20 @@ class ImprovementStore:
             self._set_orientation_embedding_sync,
             entry_id,
             embedding,
+            embedding_model,
         )
 
     def _set_orientation_embedding_sync(
         self,
         entry_id: str,
         embedding: list[float],
+        embedding_model: str,
     ) -> None:
         with self._connect() as connection:
             connection.execute(
-                "UPDATE orientation_entries SET embedding_json=?, updated_at=? "
+                "UPDATE orientation_entries SET embedding_json=?, embedding_model=?, embedding_dimensions=?, updated_at=? "
                 "WHERE id=?",
-                (json.dumps(embedding), _utc_now(), entry_id),
+                (json.dumps(embedding), embedding_model, len(embedding), _utc_now(), entry_id),
             )
             connection.commit()
 

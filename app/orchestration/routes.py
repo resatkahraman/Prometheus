@@ -15,6 +15,9 @@ class ModelRoute:
     economy: float
     paid: bool = False
     local: bool = False
+    model_class: str = "generation"
+    capabilities: tuple[str, ...] = ()
+    cost_class: str = "zero_free_quota"
 
 
 class RouteCatalog:
@@ -38,6 +41,8 @@ class RouteCatalog:
                 speed=7.0,
                 economy=10.0,
                 local=True,
+                capabilities=("general_generation", "general_chat", "turkish_chat", "summarization", "planning", "local_reasoning", "local_code", "rag_generation"),
+                cost_class="zero_local",
             ),
             ModelRoute(
                 key="local_expert",
@@ -48,6 +53,21 @@ class RouteCatalog:
                 speed=3.8,
                 economy=10.0,
                 local=True,
+                capabilities=("general_generation", "general_chat", "turkish_chat", "summarization", "planning", "local_reasoning", "local_code", "rag_generation"),
+                cost_class="zero_local",
+            ),
+            ModelRoute(
+                key="local_structured",
+                provider="ollama",
+                model=self.settings.ollama_structured_model,
+                label=f"Local Structured {self.settings.ollama_structured_model}",
+                quality=7.5,
+                speed=7.0,
+                economy=10.0,
+                local=True,
+                model_class="structured_tool",
+                capabilities=("structured_output", "json_schema", "intent_classification", "tool_routing"),
+                cost_class="zero_local",
             ),
             ModelRoute(
                 key="gemini",

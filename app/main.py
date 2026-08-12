@@ -46,6 +46,8 @@ from app.core.schemas import (
     DesktopCommandResponse,
     HealthResponse,
     ModelCatalogResponse,
+    DesktopModelCatalogResponse,
+    DesktopModelProfile,
     OperationsStatusResponse,
     OrchestrateRequest,
     OrchestrateResponse,
@@ -1516,6 +1518,34 @@ async def tools() -> list[ToolInfo]:
 @app.get("/v1/agents", response_model=list[AgentProfile], tags=["agents"])
 async def list_agents() -> list[AgentProfile]:
     return app.state.agents.all()
+
+
+@app.get("/v1/desktop/model-catalog", response_model=DesktopModelCatalogResponse, tags=["desktop"])
+async def desktop_model_catalog() -> DesktopModelCatalogResponse:
+    settings = app.state.settings
+    catalog = app.state.catalog
+    ollama = app.state.registry.get_optional("ollama")
+    profiles: list[DesktopModelProfile] = []
+    for route in catalog.all():
+        availability = "available" if catalog.is_enabled(route) else "unavailable"
+        if route.local and ollama is not None:
+            availability = await ollama.availability(route.model)
+        profiles.append(DesktopModelProfile(
+            route_key=route.key,
+            canonical_id=route.model,
+            display_name=route.label,
+            provider=route.provider,
+            local=route.local,
+            model_class=route.model_class,
+            capabilities=list(route.capabilities),
+            enabled=catalog.is_enabled(route),
+            configured=route.local or catalog.is_enabled(route),
+            availability=availability,
+            cost_class=route.cost_class,
+            configured_context_tokens=settings.ollama_context_tokens if route.local else None,
+        ))
+    agents = [agent.model_dump(mode="json") for agent in app.state.agents.all()[:128]]
+    return DesktopModelCatalogResponse(models=profiles[:128], agents=agents, routing_information="No canonical routing information")
 
 
 @app.get("/v1/skills", response_model=SkillCatalogResponse, tags=["skills"])

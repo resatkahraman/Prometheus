@@ -41,6 +41,7 @@ class ProviderRegistry:
                 managed_models=(
                     settings.ollama_model,
                     settings.ollama_expert_model,
+                    settings.ollama_structured_model,
                     settings.ollama_embedding_model,
                 ),
             )

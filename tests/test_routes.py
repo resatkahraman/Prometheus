@@ -15,6 +15,7 @@ def test_route_catalog_has_local_and_four_remote_routes():
     assert [route.key for route in catalog.all()] == [
         "local_qwen",
         "local_expert",
+        "local_structured",
         "gemini",
         "github",
         "groq_fast",

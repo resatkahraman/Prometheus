@@ -178,6 +178,7 @@ class ImprovementService:
                     await self.store.set_orientation_embedding(
                         row["id"],
                         vector,
+                        self.settings.ollama_embedding_model,
                     )
             except Exception:
                 query_embedding = None
@@ -208,7 +209,7 @@ class ImprovementService:
                 harmful = int(row.get("harmful") or 0)
                 reliability = (helpful + 1) / (helpful + harmful + 2)
             semantic = 0.0
-            if query_embedding and row.get("embedding_json"):
+            if query_embedding and row.get("embedding_json") and row.get("embedding_model") == self.settings.ollama_embedding_model:
                 try:
                     semantic = _cosine(
                         query_embedding,
@@ -421,14 +422,19 @@ class ImprovementService:
                 indexed += 1
 
         embedded = 0
+        incompatible = 0
         if build_embeddings and self.embedding is not None:
             orientations, _strategies = await self.store.recall_rows(
                 project_key=self.project_key,
                 limit=max(1_000, max_files * 3),
             )
-            pending = [
-                row for row in orientations if not row.get("embedding_json")
-            ]
+            pending = [row for row in orientations if not row.get("embedding_json")]
+            incompatible = sum(
+                1
+                for row in orientations
+                if row.get("embedding_json")
+                and row.get("embedding_model") != self.settings.ollama_embedding_model
+            )
             batch_size = self.settings.embedding_recall_batch_size
             for start in range(0, len(pending), batch_size):
                 batch = pending[start:start + batch_size]
@@ -448,6 +454,7 @@ class ImprovementService:
                     await self.store.set_orientation_embedding(
                         row["id"],
                         vector,
+                        self.settings.ollama_embedding_model,
                     )
                     embedded += 1
         return {
@@ -455,6 +462,8 @@ class ImprovementService:
             "embedded_entries": embedded,
             "skipped_files": skipped,
             "embedding_model": self.settings.ollama_embedding_model,
+            "incompatible_embeddings": incompatible,
+            "embedding_rebuild_required": incompatible > 0,
         }
 
     async def list_rows(self, table: str, *, limit: int = 100) -> list[dict[str, Any]]:
