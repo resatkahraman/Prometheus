@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 
@@ -39,3 +40,29 @@ def test_sidecar_build_and_smoke_tools_are_present():
     assert "prometheus-core-x86_64-pc-windows-msvc" in build
     assert "127.0.0.1:18765/v1/health" in smoke
     assert "creationflags=0x08000000" in smoke
+
+
+def test_frozen_entrypoint_configures_logging_without_tty(monkeypatch):
+    import uvicorn
+
+    import app.desktop_server as server
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+    server._STDIO_SINKS.clear()
+    server.ensure_noninteractive_stdio()
+    assert sys.stdout is not None and not sys.stdout.isatty()
+    assert sys.stderr is not None and not sys.stderr.isatty()
+    config = uvicorn.Config("app.main:app", use_colors=False)
+    assert config.use_colors is False
+    config.load()
+    for sink in server._STDIO_SINKS:
+        sink.close()
+    server._STDIO_SINKS.clear()
+
+
+def test_no_console_entrypoint_contract_remains_intact():
+    entrypoint = (ROOT / "app/desktop_server.py").read_text(encoding="utf-8")
+    rust_main = (ROOT / "desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
+    assert "use_colors=False" in entrypoint
+    assert "windows_subsystem = \"windows\"" in rust_main

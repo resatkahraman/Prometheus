@@ -16,7 +16,9 @@ Validation recorded:
 - `npm.cmd ci`: `73 packages`, `0 vulnerabilities`.
 - Frontend production build: PASS.
 - NSIS build: PASS; `Prometheus_0.1.3_x64-setup.exe`.
-- Artifact SHA-256: `A8A2DCFBCB26DB9CE85961CD5AE9D7786B1B897E6FB2AD758BAF915C437CBE82`.
+- Artifact SHA-256: `4F78AEAB868CDD22F950FA7CFA7A0A54DA9F846FE5EDADB86DE48D790BE241A7`.
 - Artifact signature: `NotSigned`; signing and updater remain future release work.
+
+Post-build logging hardening: the frozen `--noconsole` entrypoint supplies non-interactive stdout/stderr sinks before Uvicorn starts and passes `use_colors=False`; regression coverage simulates both streams being `None` and verifies TTY-free initialization. Final full suite: `990 passed, 1 warning`.
 
 The canonical model stack remains `gemma4:e4b-it-qat`, `embeddinggemma:300m-qat-q4_0` and `ministral-3:3b`; model files and secrets are not bundled.
