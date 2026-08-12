@@ -58,5 +58,6 @@
 - [x] DESKTOP-008: Packaging, Polish and Release
 - [x] HOTFIX-DESKTOP-FINAL-001: Windows Release Acceptance Blockers
 - [x] HOTFIX-DESKTOP-FINAL-002: Persistent Window Drag + Command Submit Blockers
+- [x] HOTFIX-DESKTOP-FINAL-003: Installed Release Core Runtime Binding
 - [ ] DESKTOP-FINAL-ACCEPTANCE: Comprehensive Manual End-to-End Acceptance Test - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution

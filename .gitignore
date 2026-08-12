@@ -52,3 +52,4 @@ CODEX_PROMPT_*.md
 .pytest_tmp/
 .pytest_tmp*/
 .pytest-cache/
+desktop/src-tauri/binaries/

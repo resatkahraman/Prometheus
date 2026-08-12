@@ -22,8 +22,9 @@ def resolve_core_port(value: str | None = None) -> int:
 
 def main() -> None:
     import uvicorn
+    from app.main import app
 
-    uvicorn.run("app.main:app", host=CORE_HOST, port=resolve_core_port(), reload=False)
+    uvicorn.run(app, host=CORE_HOST, port=resolve_core_port(), reload=False)
 
 
 if __name__ == "__main__":

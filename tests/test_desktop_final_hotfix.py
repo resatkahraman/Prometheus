@@ -27,8 +27,8 @@ def test_release_gui_and_version_contract() -> None:
     tauri = json.loads((DESKTOP / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
     cargo = (DESKTOP / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
     main = (TAURI_SRC / "main.rs").read_text(encoding="utf-8")
-    assert package["version"] == tauri["version"] == "0.1.2"
-    assert 'version="0.1.2"' in cargo
+    assert package["version"] == tauri["version"] == "0.1.3"
+    assert 'version="0.1.3"' in cargo
     assert 'windows_subsystem = "windows"' in main
 
 

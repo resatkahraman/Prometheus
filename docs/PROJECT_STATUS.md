@@ -11,7 +11,7 @@ DESKTOP-002 status: Implementation complete and automated-validated; manual Desk
 DESKTOP-PKG-001 status: COMPLETE
 Previous Desktop task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
 DESKTOP-006 status: Completed and validated.
-Current Desktop task: HOTFIX-DESKTOP-FINAL-002 - Persistent Window Drag + Command Submit Blockers completed and automated-validated.
+Current Desktop task: HOTFIX-DESKTOP-FINAL-003 - Installed Release Core Runtime Binding completed and validated.
 Next architectural stage: DESKTOP-FINAL-ACCEPTANCE - Comprehensive Manual End-to-End Acceptance Test
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
@@ -38,6 +38,8 @@ HOTFIX-DESKTOP-FINAL-001 resolves the first installed-build blockers. The custom
 The validated NSIS artifact is `Prometheus_0.1.1_x64-setup.exe` (2,693,379 bytes; SHA-256 `874D0B3FDF231B30F036C733721DB152E3ABA31BCB2F31F4A3B127ED259EC7BD`). It is unsigned (`NotSigned`) and updater infrastructure remains not configured. Targeted validation: 19 passed; focused Desktop/security regression: 65 passed; npm ci: 73 packages with 0 vulnerabilities; frontend build: PASS; Rust tests: 16 passed; cargo check: PASS; final full pytest: 983 passed with the existing Starlette/httpx TestClient deprecation warning. Installer execution and comprehensive end-to-end acceptance remain the next supervised stage.
 
 HOTFIX-DESKTOP-FINAL-002 resolves the remaining acceptance blockers. The dedicated titlebar surface now has a typed `startDragging()` fallback restricted to left-button presses on that surface, while controls remain outside it. The command composer no longer silently no-ops when Core is unavailable: it remains truthful and displays the readiness/authentication reason; ready submissions use the exact authenticated loopback `/v1/desktop/command` contract with CSRF. A direct ASGI regression covers acceptance, missing-CSRF rejection and invalid-body rejection. The validated 0.1.2 NSIS artifact is `Prometheus_0.1.2_x64-setup.exe` (2,693,298 bytes; SHA-256 `8CA65E713EBB018A5C8C26139ACB083B6D217B524E9D9228DC9C37C27B315C80`), unsigned with updater not configured. Targeted validation: 15 passed; focused regression: 66 passed; npm ci: 73 packages with 0 vulnerabilities; frontend build: PASS; Rust tests: 16 passed; cargo check: PASS; final full pytest: 984 passed with the existing Starlette/httpx TestClient deprecation warning.
+
+HOTFIX-DESKTOP-FINAL-003 binds the installed release to an application-owned PyInstaller Core sidecar (`prometheus-core-x86_64-pc-windows-msvc.exe`) through Tauri `externalBin`. Release startup no longer scans PATH, searches for Python, depends on the Git checkout or writes to packaged resources; it uses a writable application-data directory while retaining explicit bounded lifecycle, loopback transport, authentication and CSRF. The sidecar smoke test reached `/v1/health` from a temporary non-repository CWD. Version `0.1.3` NSIS artifact: `Prometheus_0.1.3_x64-setup.exe`, SHA-256 `A8A2DCFBCB26DB9CE85961CD5AE9D7786B1B897E6FB2AD758BAF915C437CBE82`, `NotSigned`. Targeted hotfix tests: 9 passed; Rust tests: 17 passed; cargo check, npm ci (73 packages/0 vulnerabilities), frontend build and NSIS build passed. Local models remain external and are not bundled; code signing/updater remain future release work.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)

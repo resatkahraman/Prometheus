@@ -9,7 +9,7 @@ use crate::native_os::{self, NativeCapability, NativeEnvironmentInfo, NativeOsEr
 #[tauri::command]pub async fn desktop_core_status()->CoreStatus{core_transport::health().await}
 #[tauri::command]pub async fn desktop_model_catalog()->Result<DesktopModelCatalog,TransportFailure>{core_transport::desktop_model_catalog().await}
 #[tauri::command]pub async fn desktop_runtime_status(state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{let runtime=state.inner().clone();Ok(core_runtime::status(runtime).await)}
-#[tauri::command]pub async fn desktop_start_core(state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{core_runtime::start(state.inner().clone()).await}
+#[tauri::command]pub async fn desktop_start_core(app:tauri::AppHandle,state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{core_runtime::start(app,state.inner().clone()).await}
 #[tauri::command]pub async fn desktop_stop_core(state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{core_runtime::stop(state.inner().clone()).await}
 #[tauri::command]pub async fn desktop_submit_command(message:String)->Result<DesktopCommandResponse,TransportFailure>{core_transport::submit(message).await}
 #[tauri::command]pub async fn desktop_mission(mission_id:String)->Result<MissionView,TransportFailure>{core_transport::mission(mission_id).await}
