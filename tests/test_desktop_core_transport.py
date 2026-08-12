@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.desktop_server import CORE_HOST, DEFAULT_CORE_PORT, resolve_core_port
+from app.desktop_server import CORE_HOST, resolve_core_port
 from app.core.schemas import DesktopCommandRequest
 from app.main import submit_desktop_command
 
@@ -15,10 +15,10 @@ def _request(client: str = "127.0.0.1", host: str = "127.0.0.1") -> Request:
 
 def test_desktop_server_port_contract():
     assert CORE_HOST == "127.0.0.1"
-    assert resolve_core_port(None) == DEFAULT_CORE_PORT == 8765
+    assert resolve_core_port(None) == 0
     assert resolve_core_port("4321") == 4321
-    assert resolve_core_port("80") == DEFAULT_CORE_PORT
-    assert resolve_core_port("not-a-port") == DEFAULT_CORE_PORT
+    assert resolve_core_port("80") == 0
+    assert resolve_core_port("not-a-port") == 0
 
 
 def test_desktop_message_is_trimmed_and_bounded():
@@ -69,6 +69,21 @@ async def test_desktop_command_normalizes_backend_summary_and_approval(monkeypat
     monkeypatch.setattr(main.app.state, "supervisor", Supervisor(), raising=False)
     result = await submit_desktop_command(DesktopCommandRequest(message="hesapla"), _request())
     assert result.model_dump() == {"status": "awaiting_approval", "mission_id": "mission-2", "summary": "queued", "requires_approval": True}
+
+
+@pytest.mark.asyncio
+async def test_desktop_conversation_uses_canonical_orchestrator(monkeypatch):
+    class Orchestrator:
+        async def run(self, request):
+            assert request.message == "Prometheus Core nedir?"
+            return SimpleNamespace(answer="Core, Prometheus'un yerel backend'idir.")
+
+    from app import main
+    monkeypatch.setattr(main.app.state, "orchestrator", Orchestrator(), raising=False)
+    result = await submit_desktop_command(DesktopCommandRequest(message="Prometheus Core nedir?"), _request())
+    assert result.status == "conversation_completed"
+    assert result.summary.startswith("Core,")
+    assert result.mission_id == ""
 
 
 @pytest.mark.asyncio

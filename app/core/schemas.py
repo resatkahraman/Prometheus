@@ -411,7 +411,7 @@ class DesktopCommandRequest(BaseModel):
 
 class DesktopCommandResponse(BaseModel):
     status: str
-    mission_id: str
+    mission_id: str = ""
     summary: str | None = None
     requires_approval: bool = False
 

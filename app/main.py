@@ -215,6 +215,7 @@ from app.memory.decision_memory import (
     DecisionMemoryValidationError,
 )
 from app.branding import BRAND_NAME, BRAND_STAGE, BRAND_VERSION
+from app.intent_router import IntentRoute, classify_intent
 from app.skills.registry import (
     SkillManifestError,
     SkillManifestIntegrityError,
@@ -1708,8 +1709,15 @@ async def submit_desktop_command(
     request: DesktopCommandRequest,
     http_request: Request,
 ) -> DesktopCommandResponse:
+    intent = classify_intent(request.message)
     if not is_local_http_request(http_request):
         raise HTTPException(status_code=403, detail="Desktop Core yalnızca loopback üzerinden kullanılabilir.")
+    if intent.route in {IntentRoute.CONVERSATION, IntentRoute.INFORMATIONAL} and getattr(app.state, "orchestrator", None) is not None:
+        try:
+            answer = await app.state.orchestrator.run(OrchestrateRequest(message=request.message, mode="auto"))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail="MODEL_UNAVAILABLE") from exc
+        return DesktopCommandResponse(status="conversation_completed", summary=answer.answer)
     try:
         command = await app.state.supervisor.create(
             goal=request.message,

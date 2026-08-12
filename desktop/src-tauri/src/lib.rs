@@ -2,6 +2,7 @@ mod bridge;
 mod core_transport;
 mod core_runtime;
 mod native_os;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +13,14 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(native_os::NativeOsState::default())
         .manage(std::sync::Arc::new(std::sync::Mutex::new(core_runtime::CoreRuntime::new())))
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let runtime = app.state::<core_runtime::SharedRuntime>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = core_runtime::start(handle, runtime).await;
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             bridge::desktop_bootstrap, bridge::desktop_core_status, bridge::desktop_model_catalog,
             bridge::desktop_runtime_status, bridge::desktop_start_core, bridge::desktop_stop_core,

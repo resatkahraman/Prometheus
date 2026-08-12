@@ -26,9 +26,9 @@ def test_release_runtime_does_not_use_generic_process_or_shell_authority():
 def test_sidecar_packaging_contract_and_version():
     package = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
     tauri = json.loads((ROOT / "desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
-    assert package["version"] == "0.1.4"
+    assert package["version"] == "0.1.5"
     assert "build:core-sidecar" in package["scripts"]
-    assert tauri["version"] == "0.1.4"
+    assert tauri["version"] == "0.1.5"
     assert tauri["build"]["beforeBuildCommand"].startswith("npm.cmd run build:core-sidecar")
     assert tauri["bundle"]["externalBin"] == ["binaries/prometheus-core"]
 

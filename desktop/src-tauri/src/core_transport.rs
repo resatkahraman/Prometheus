@@ -5,7 +5,6 @@ use std::time::Duration;
 use std::sync::atomic::{AtomicU16, Ordering};
 
 pub const CORE_HOST: &str = "127.0.0.1";
-pub const DEFAULT_CORE_PORT: u16 = 8765;
 static RUNTIME_PORT: AtomicU16 = AtomicU16::new(0);
 const CSRF_HEADER_NAME: &str = "X-Prometheus-CSRF";
 const CSRF_HEADER_VALUE: &str = "1";
@@ -61,12 +60,12 @@ impl TransportFailure {
 }
 
 pub fn resolve_port(value: Option<&str>) -> u16 {
-    value.and_then(|raw| raw.trim().parse::<u16>().ok()).filter(|port| (1024..=65535).contains(port)).unwrap_or(DEFAULT_CORE_PORT)
+    value.and_then(|raw| raw.trim().parse::<u16>().ok()).filter(|port| (1024..=65535).contains(port)).unwrap_or(0)
 }
 
 pub fn set_runtime_port(port: u16) { RUNTIME_PORT.store(port, Ordering::SeqCst); }
 pub fn clear_runtime_port() { RUNTIME_PORT.store(0, Ordering::SeqCst); }
-pub fn configured_port() -> u16 { let runtime = RUNTIME_PORT.load(Ordering::SeqCst); if (1024..=65535).contains(&runtime) { runtime } else { resolve_port(env::var("PROMETHEUS_DESKTOP_CORE_PORT").ok().as_deref()) } }
+pub fn configured_port() -> u16 { RUNTIME_PORT.load(Ordering::SeqCst) }
 
 fn client(timeout: Duration) -> Result<Client, TransportFailure> {
     Client::builder().redirect(Policy::none()).connect_timeout(Duration::from_millis(1500)).timeout(timeout).build().map_err(|_| TransportFailure { code: "core_error", message: "Core istemcisi başlatılamadı." })
@@ -148,6 +147,7 @@ fn auth_header(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
 }
 
 pub async fn health() -> CoreStatus {
+    if configured_port() == 0 { return CoreStatus { state: CoreState::NotRunning, code: "core_offline".to_string(), message: "Prometheus Core başlatılıyor.".to_string() }; }
     let client = match client(Duration::from_millis(3000)) { Ok(value) => value, Err(error) => return error.status() };
     let request = auth_header(client.get(endpoint("/v1/health")));
     let response = match request.send().await { Ok(value) => value, Err(error) if error.is_timeout() => return CoreStatus { state: CoreState::CoreError, code: "timeout".to_string(), message: "Core bağlantısı zaman aşımına uğradı.".to_string() }, Err(_) => return CoreStatus { state: CoreState::NotRunning, code: "core_offline".to_string(), message: "Core çevrimdışı.".to_string() } };
@@ -179,8 +179,8 @@ pub async fn submit(message: String) -> Result<DesktopCommandResponse, Transport
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn default_port_is_loopback_contract() { assert_eq!(resolve_port(None), 8765); assert!(endpoint("/v1/health").starts_with("http://127.0.0.1:")); }
-    #[test] fn port_override_is_bounded() { assert_eq!(resolve_port(Some("4321")), 4321); assert_eq!(resolve_port(Some("80")), 8765); assert_eq!(resolve_port(Some("65536")), 8765); assert_eq!(resolve_port(Some("nope")), 8765); }
-    #[test] fn canonical_endpoints_are_loopback_only() { assert_eq!(CORE_HOST, "127.0.0.1"); assert_eq!(endpoint("/v1/health"), "http://127.0.0.1:8765/v1/health"); assert_eq!(endpoint("/v1/desktop/command"), "http://127.0.0.1:8765/v1/desktop/command"); }
+    #[test] fn no_owned_runtime_has_no_port() { clear_runtime_port(); assert_eq!(configured_port(), 0); }
+    #[test] fn port_override_is_bounded_without_default() { assert_eq!(resolve_port(Some("4321")), 4321); assert_eq!(resolve_port(Some("80")), 0); assert_eq!(resolve_port(Some("65536")), 0); assert_eq!(resolve_port(Some("nope")), 0); }
+    #[test] fn canonical_endpoints_are_loopback_only() { set_runtime_port(4321); assert_eq!(CORE_HOST, "127.0.0.1"); assert_eq!(endpoint("/v1/health"), "http://127.0.0.1:4321/v1/health"); clear_runtime_port(); }
     #[test] fn mission_and_approval_paths_are_bounded() { assert!(mission_path("mission-1", "").unwrap().ends_with("/mission-1")); assert!(mission_path("mission-1", "/history?limit=50").unwrap().ends_with("/history?limit=50")); assert!(mission_path("mission-1", "/execution-receipts?limit=50").is_ok()); assert!(task_path("mission-1", "task-1", "approve").unwrap().ends_with("/tasks/task-1/approve")); assert!(review_path("mission-1", "approval-1").unwrap().ends_with("/approvals/approval-1/review")); assert!(mission_path("../escape", "").is_err()); assert!(task_path("mission-1", "task/escape", "reject").is_err()); assert!(review_path("mission-1", "approval/escape").is_err()); assert!(valid_segment("approval-1")); assert!(!valid_segment("")); }
 }

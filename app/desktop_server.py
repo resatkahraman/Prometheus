@@ -7,7 +7,6 @@ import sys
 from typing import TextIO
 
 CORE_HOST = "127.0.0.1"
-DEFAULT_CORE_PORT = 8765
 CORE_PORT_ENV = "PROMETHEUS_CORE_PORT"
 _STDIO_SINKS: list[TextIO] = []
 
@@ -44,12 +43,12 @@ def ensure_noninteractive_stdio() -> None:
 def resolve_core_port(value: str | None = None) -> int:
     candidate = value if value is not None else os.getenv(CORE_PORT_ENV) or os.getenv("PROMETHEUS_DESKTOP_CORE_PORT")
     if candidate is None or not candidate.strip():
-        return DEFAULT_CORE_PORT
+        return 0
     try:
         port = int(candidate.strip())
     except (TypeError, ValueError):
-        return DEFAULT_CORE_PORT
-    return port if 1024 <= port <= 65535 else DEFAULT_CORE_PORT
+        return 0
+    return port if 1024 <= port <= 65535 else 0
 
 
 def main() -> None:

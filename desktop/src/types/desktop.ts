@@ -8,7 +8,7 @@ export interface DesktopModelCatalog{models:DesktopModelProfile[];agents:Record<
 export interface NativeCapability{capability_id:string;available:boolean;platform:string;requires_user_gesture:boolean}
 export interface NativeEnvironmentInfo{os_family:string;architecture:string;application_version:string;runtime_platform:string;core_runtime_requirement:string;updater_state:string;code_signing_state:string}
 export interface DesktopCommandRequest{message:string}
-export interface DesktopCommandResponse{status:string;mission_id:string;summary:string|null;requires_approval:boolean}
+export interface DesktopCommandResponse{status:string;mission_id:string;summary:string|null;requires_approval:boolean;route?:string;answer?:string|null}
 export interface MissionTask{ id:string; title:string; status:string; assigned_agent:string; approval_id:string|null; approval_version:number; approval_state:string; approval_description:string|null; approval_preview:unknown|null; approval_tool:string|null; last_approval_message:string|null }
 export interface Mission{ id:string; goal:string; status:string; tasks:MissionTask[]; created_at:string; updated_at?:string|null; operation_message?:string|null; failure_reason?:string|null }
 export interface MissionEvent{ sequence:number; event_type:string; message:string; occurred_at:string; task_id:string|null; approval_id:string|null }
