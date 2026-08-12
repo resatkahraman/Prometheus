@@ -56,5 +56,6 @@
 - [x] DESKTOP-006: Agents and Model Control
 - [x] DESKTOP-007: Native OS Integration
 - [x] DESKTOP-008: Packaging, Polish and Release
+- [x] HOTFIX-DESKTOP-FINAL-001: Windows Release Acceptance Blockers
 - [ ] DESKTOP-FINAL-ACCEPTANCE: Comprehensive Manual End-to-End Acceptance Test - next
 - [ ] TASK-060-074: Supervised self-development and autonomous evolution

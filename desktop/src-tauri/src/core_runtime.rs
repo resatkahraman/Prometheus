@@ -26,6 +26,12 @@ fn set_error(runtime: &mut CoreRuntime, lifecycle: RuntimeLifecycle, code: &str,
 fn child_alive(runtime: &mut CoreRuntime) -> bool { if let Some(child) = runtime.child.as_mut() { match child.try_wait() { Ok(None) => true, Ok(Some(_)) | Err(_) => { runtime.child = None; false } } } else { false } }
 fn pause(duration: Duration) { std::thread::sleep(duration); }
 
+#[cfg(windows)]
+fn configure_child_process(command: &mut Command) { use std::os::windows::process::CommandExt; command.creation_flags(0x0800_0000); }
+
+#[cfg(not(windows))]
+fn configure_child_process(_command: &mut Command) {}
+
 pub async fn status(shared: SharedRuntime) -> RuntimeStatus {
     let current = { let mut guard = shared.lock().expect("runtime lock"); if child_alive(&mut guard) { return guard.status(); } guard.lifecycle.clone() };
     if matches!(current, RuntimeLifecycle::ManagedStarting | RuntimeLifecycle::ManagedReady | RuntimeLifecycle::ManagedStopping) { let mut guard = shared.lock().expect("runtime lock"); set_error(&mut guard, RuntimeLifecycle::ManagedExited, "managed_exited", "Desktop tarafından başlatılan Core kapandı."); return guard.status(); }
@@ -37,7 +43,7 @@ pub async fn start(shared: SharedRuntime) -> Result<RuntimeStatus, String> {
     { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; if child_alive(&mut guard) { return Ok(guard.status()); } if !matches!(guard.lifecycle, RuntimeLifecycle::Offline | RuntimeLifecycle::ManagedExited | RuntimeLifecycle::LaunchFailed) { return Err("already_managed_or_external".into()); } }
     let before = core_transport::health().await; if !matches!(before.state, CoreState::NotRunning) { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; let status = match before.state { CoreState::Ready => (RuntimeLifecycle::ExternalReady, "external_ready", "External Core / Dışarıdan yönetilen Core."), CoreState::AuthRequired => (RuntimeLifecycle::ExternalAuthRequired, "auth_required", "Mevcut Core kimlik doğrulaması istiyor."), _ => (RuntimeLifecycle::PortConflict, "port_conflict", "Core portu kullanımda ancak canonical Core doğrulanamadı." ) }; set_error(&mut guard, status.0, status.1, status.2); return Err(status.1.into()); }
     let executable = match python_path() { Some(path) => path, None => { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; set_error(&mut guard, RuntimeLifecycle::LaunchUnavailable, "launch_unavailable", "Canonical development Core launcher is unavailable."); return Err("launch_unavailable".into()); } }; let root = match repo_root() { Some(path) => path, None => { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; set_error(&mut guard, RuntimeLifecycle::LaunchUnavailable, "launch_unavailable", "Canonical development Core workspace is unavailable."); return Err("launch_unavailable".into()); } };
-    let child = Command::new(executable).current_dir(root).args(["-m", "app.desktop_server"]).spawn().map_err(|_| "launch_failed".to_string())?;
+    let mut command = Command::new(executable); command.current_dir(root).args(["-m", "app.desktop_server"]); configure_child_process(&mut command); let child = command.spawn().map_err(|_| "launch_failed".to_string())?;
     { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.child = Some(child); set_error(&mut guard, RuntimeLifecycle::ManagedStarting, "starting", "Core başlatılıyor…"); }
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline { { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; if !child_alive(&mut guard) { set_error(&mut guard, RuntimeLifecycle::LaunchFailed, "launch_failed", "Core hazır olmadan kapandı."); return Err("launch_failed".into()); } } if matches!(core_transport::health().await.state, CoreState::Ready) { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; set_error(&mut guard, RuntimeLifecycle::ManagedReady, "managed_ready", "Desktop tarafından yönetilen Core hazır."); return Ok(guard.status()); } pause(Duration::from_millis(500)); }

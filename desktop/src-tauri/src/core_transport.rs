@@ -5,6 +5,8 @@ use std::time::Duration;
 
 pub const CORE_HOST: &str = "127.0.0.1";
 pub const DEFAULT_CORE_PORT: u16 = 8765;
+const CSRF_HEADER_NAME: &str = "X-Prometheus-CSRF";
+const CSRF_HEADER_VALUE: &str = "1";
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Serialize)]
@@ -123,7 +125,7 @@ async fn decide_task(mission_id: String, task_id: String, approval_id: String, a
     if !valid_segment(&approval_id) || approval_version == 0 { return Err(TransportFailure { code: "invalid_identifier", message: "Onay kimliği geçersiz." }); }
     let client = client(Duration::from_secs(120))?;
     let path = task_path(&mission_id, &task_id, action).map_err(|_| TransportFailure { code: "invalid_identifier", message: "Mission veya görev kimliği geçersiz." })?;
-    let response = auth_header(client.post(path).json(&ApprovalDecisionRequest { approval_id, approval_version, background: true })).send().await.map_err(|_| TransportFailure { code: "uncertain", message: "Karar iletimi belirsiz; otomatik tekrar yapılmadı." })?;
+    let response = auth_header(client.post(path).header(CSRF_HEADER_NAME, CSRF_HEADER_VALUE).json(&ApprovalDecisionRequest { approval_id, approval_version, background: true })).send().await.map_err(|_| TransportFailure { code: "uncertain", message: "Karar iletimi belirsiz; otomatik tekrar yapılmadı." })?;
     response_json(response).await
 }
 
@@ -158,7 +160,7 @@ pub async fn desktop_model_catalog() -> Result<DesktopModelCatalog, TransportFai
 
 pub async fn submit(message: String) -> Result<DesktopCommandResponse, TransportFailure> {
     let client = client(Duration::from_secs(120))?;
-    let request = auth_header(client.post(endpoint("/v1/desktop/command")).json(&DesktopCommandRequest { message }));
+    let request = auth_header(client.post(endpoint("/v1/desktop/command")).header(CSRF_HEADER_NAME, CSRF_HEADER_VALUE).json(&DesktopCommandRequest { message }));
     let response = request.send().await.map_err(|error| if error.is_timeout() { TransportFailure { code: "timeout", message: "Core bağlantısı zaman aşımına uğradı." } } else { TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi. Komut otomatik olarak yeniden gönderilmedi." } })?;
     let status = response.status();
     let body = bounded_body(response).await?;
