@@ -27,8 +27,8 @@ def test_release_gui_and_version_contract() -> None:
     tauri = json.loads((DESKTOP / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
     cargo = (DESKTOP / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
     main = (TAURI_SRC / "main.rs").read_text(encoding="utf-8")
-    assert package["version"] == tauri["version"] == "0.1.5"
-    assert 'version="0.1.5"' in cargo
+    assert package["version"] == tauri["version"] == "0.1.6"
+    assert 'version="0.1.6"' in cargo
     assert 'windows_subsystem = "windows"' in main
 
 
@@ -39,6 +39,16 @@ def test_core_launcher_hides_windows_console_without_authority_widening() -> Non
     assert "cmd.exe" not in source.casefold()
     assert "powershell" not in source.casefold()
     assert "PATH" not in source
+
+
+def test_installed_core_identity_and_exit_cleanup_contract() -> None:
+    runtime = (TAURI_SRC / "core_runtime.rs").read_text(encoding="utf-8")
+    lib = (TAURI_SRC / "lib.rs").read_text(encoding="utf-8")
+    app = (DESKTOP / "src" / "App.tsx").read_text(encoding="utf-8")
+    assert 'SIDECAR_NAME: &str = "prometheus-core.exe"' in runtime
+    assert "RunEvent::ExitRequested" in lib
+    assert "core_runtime::stop(runtime).await" in lib
+    assert "const started = await startDesktopCore()" not in app
 
 
 def test_desktop_submit_keeps_csrf_and_canonical_transport() -> None:

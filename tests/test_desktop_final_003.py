@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_release_runtime_uses_bundled_sidecar_and_app_data(tmp_path):
     source = (ROOT / "desktop/src-tauri/src/core_runtime.rs").read_text(encoding="utf-8")
-    assert 'SIDECAR_NAME: &str = "prometheus-core-x86_64-pc-windows-msvc.exe"' in source
+    assert 'SIDECAR_NAME: &str = "prometheus-core.exe"' in source
     assert "resource_dir()" in source
     assert "app_data_dir()" in source
     assert "if cfg!(debug_assertions)" in source
@@ -26,9 +26,9 @@ def test_release_runtime_does_not_use_generic_process_or_shell_authority():
 def test_sidecar_packaging_contract_and_version():
     package = json.loads((ROOT / "desktop/package.json").read_text(encoding="utf-8"))
     tauri = json.loads((ROOT / "desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))
-    assert package["version"] == "0.1.5"
+    assert package["version"] == "0.1.6"
     assert "build:core-sidecar" in package["scripts"]
-    assert tauri["version"] == "0.1.5"
+    assert tauri["version"] == "0.1.6"
     assert tauri["build"]["beforeBuildCommand"].startswith("npm.cmd run build:core-sidecar")
     assert tauri["bundle"]["externalBin"] == ["binaries/prometheus-core"]
 

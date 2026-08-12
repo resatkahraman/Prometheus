@@ -33,6 +33,17 @@ pub fn run() {
             bridge::desktop_native_write_clipboard, bridge::desktop_native_notify,
             bridge::desktop_native_open_external_url,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Prometheus");
+        .build(tauri::generate_context!())
+        .expect("error while building Prometheus")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                api.prevent_exit();
+                let runtime = app_handle.state::<core_runtime::SharedRuntime>().inner().clone();
+                let handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = core_runtime::stop(runtime).await;
+                    handle.exit(0);
+                });
+            }
+        });
 }
