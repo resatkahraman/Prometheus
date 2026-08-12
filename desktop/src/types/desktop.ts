@@ -5,6 +5,8 @@ export type RuntimeLifecycle='offline'|'external_ready'|'external_auth_required'
 export interface RuntimeStatus{connectivity:string;ownership:string;lifecycle:RuntimeLifecycle;can_start:boolean;can_stop:boolean;message_code:string;message:string}
 export interface DesktopModelProfile{route_key:string;canonical_id:string;display_name:string;provider:string;local:boolean;model_class:string;capabilities:string[];enabled:boolean;configured:boolean;availability:string;cost_class:string;configured_context_tokens:number|null}
 export interface DesktopModelCatalog{models:DesktopModelProfile[];agents:Record<string,unknown>[];routing_information:string}
+export interface NativeCapability{capability_id:string;available:boolean;platform:string;requires_user_gesture:boolean}
+export interface NativeEnvironmentInfo{os_family:string;architecture:string;application_version:string;runtime_platform:string}
 export interface DesktopCommandRequest{message:string}
 export interface DesktopCommandResponse{status:string;mission_id:string;summary:string|null;requires_approval:boolean}
 export interface MissionTask{ id:string; title:string; status:string; assigned_agent:string; approval_id:string|null; approval_version:number; approval_state:string; approval_description:string|null; approval_preview:unknown|null; approval_tool:string|null; last_approval_message:string|null }

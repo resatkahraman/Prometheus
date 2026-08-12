@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ApprovalReview, CoreStatus, DesktopBootstrap, DesktopCommandResponse, DesktopModelCatalog, MemoryPage, Mission, MissionEvents, MissionHistory, ReceiptPage, RuntimeStatus } from '../types/desktop';
+import type { ApprovalReview, CoreStatus, DesktopBootstrap, DesktopCommandResponse, DesktopModelCatalog, MemoryPage, Mission, MissionEvents, MissionHistory, NativeCapability, NativeEnvironmentInfo, ReceiptPage, RuntimeStatus } from '../types/desktop';
 
 const native = () => '__TAURI_INTERNALS__' in window;
 const previewStatus: CoreStatus = { state: 'preview', code: 'preview', message: 'Core transport is available only in the native application.' };
@@ -50,3 +50,14 @@ export async function rejectDesktopTask(missionId: string, taskId: string, appro
   if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' };
   return invoke<Mission>('desktop_reject_task', { missionId, taskId, approvalId, approvalVersion });
 }
+
+const nativeOnly = () => { if (!native()) throw { code: 'not_available', message: 'Native integration is available only in the installed application.' }; };
+export async function getNativeEnvironment(): Promise<NativeEnvironmentInfo> { nativeOnly(); return invoke<NativeEnvironmentInfo>('desktop_native_environment'); }
+export async function getNativeCapabilities(): Promise<NativeCapability[]> { nativeOnly(); return invoke<NativeCapability[]>('desktop_native_capabilities'); }
+export async function selectNativeFile(): Promise<string | null> { nativeOnly(); return invoke<string | null>('desktop_native_select_file'); }
+export async function selectNativeFolder(): Promise<string | null> { nativeOnly(); return invoke<string | null>('desktop_native_select_folder'); }
+export async function revealNativePath(path: string): Promise<void> { nativeOnly(); return invoke<void>('desktop_native_reveal_path', { path }); }
+export async function readClipboardText(): Promise<string> { nativeOnly(); return invoke<string>('desktop_native_read_clipboard'); }
+export async function writeClipboardText(text: string): Promise<void> { nativeOnly(); return invoke<void>('desktop_native_write_clipboard', { text }); }
+export async function showNativeNotification(title: string, body: string): Promise<void> { nativeOnly(); return invoke<void>('desktop_native_notify', { title, body }); }
+export async function openExternalUrl(url: string): Promise<void> { nativeOnly(); return invoke<void>('desktop_native_open_external_url', { url }); }

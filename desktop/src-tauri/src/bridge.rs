@@ -1,6 +1,7 @@
 use serde::Serialize;
 use crate::core_runtime::{self, RuntimeStatus, SharedRuntime};
 use crate::core_transport::{self, ApprovalReviewView, CoreStatus, DesktopCommandResponse, DesktopModelCatalog, MemoryPageView, MissionEventsView, MissionHistoryView, MissionView, ReceiptPageView, TransportFailure};
+use crate::native_os::{self, NativeCapability, NativeEnvironmentInfo, NativeOsError, NativeOsState};
 #[derive(Serialize)]pub struct Bootstrap{revision:&'static str,product:&'static str,surface:&'static str,native:bool,core:Core,authority:Authority}
 #[derive(Serialize)]struct Core{state:&'static str,detail:&'static str}
 #[derive(Serialize)]struct Authority{#[serde(rename="webviewFilesystem")]webview_filesystem:bool,#[serde(rename="webviewShell")]webview_shell:bool,#[serde(rename="webviewProcess")]webview_process:bool,#[serde(rename="webviewRemoteNetwork")]webview_remote_network:bool,#[serde(rename="canonicalAuthority")]canonical_authority:&'static str}
@@ -19,3 +20,12 @@ use crate::core_transport::{self, ApprovalReviewView, CoreStatus, DesktopCommand
 #[tauri::command]pub async fn desktop_approval_review(mission_id:String,approval_id:String)->Result<ApprovalReviewView,TransportFailure>{core_transport::approval_review(mission_id,approval_id).await}
 #[tauri::command]pub async fn desktop_approve_task(mission_id:String,task_id:String,approval_id:String,approval_version:u32)->Result<MissionView,TransportFailure>{core_transport::approve_task(mission_id,task_id,approval_id,approval_version).await}
 #[tauri::command]pub async fn desktop_reject_task(mission_id:String,task_id:String,approval_id:String,approval_version:u32)->Result<MissionView,TransportFailure>{core_transport::reject_task(mission_id,task_id,approval_id,approval_version).await}
+#[tauri::command]pub fn desktop_native_environment(app:tauri::AppHandle)->NativeEnvironmentInfo{native_os::environment(&app)}
+#[tauri::command]pub fn desktop_native_capabilities()->Vec<NativeCapability>{native_os::capabilities()}
+#[tauri::command]pub fn desktop_native_select_file(app:tauri::AppHandle,state:tauri::State<'_,NativeOsState>)->Result<Option<String>,NativeOsError>{native_os::select_file(&app,&state)}
+#[tauri::command]pub fn desktop_native_select_folder(app:tauri::AppHandle,state:tauri::State<'_,NativeOsState>)->Result<Option<String>,NativeOsError>{native_os::select_folder(&app,&state)}
+#[tauri::command]pub fn desktop_native_reveal_path(app:tauri::AppHandle,state:tauri::State<'_,NativeOsState>,path:String)->Result<(),NativeOsError>{native_os::reveal_path(&app,&state,&path)}
+#[tauri::command]pub fn desktop_native_read_clipboard(app:tauri::AppHandle)->Result<String,NativeOsError>{native_os::read_clipboard(&app)}
+#[tauri::command]pub fn desktop_native_write_clipboard(app:tauri::AppHandle,text:String)->Result<(),NativeOsError>{native_os::write_clipboard(&app,text)}
+#[tauri::command]pub fn desktop_native_notify(app:tauri::AppHandle,title:String,body:String)->Result<(),NativeOsError>{native_os::notify(&app,title,body)}
+#[tauri::command]pub fn desktop_native_open_external_url(app:tauri::AppHandle,url:String)->Result<(),NativeOsError>{native_os::open_external_url(&app,url)}

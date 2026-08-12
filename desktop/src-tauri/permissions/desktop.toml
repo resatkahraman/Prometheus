@@ -42,3 +42,8 @@ commands.allow=["desktop_approval_review"]
 identifier="desktop-history-read"
 description="Allows the Prometheus Desktop main window to read bounded canonical activity, receipts and memory."
 commands.allow=["desktop_mission_history","desktop_mission_receipts","desktop_mission_memory"]
+
+[[permission]]
+identifier="desktop-native-os"
+description="Allows only validated, typed and user-driven native OS integration commands."
+commands.allow=["desktop_native_environment","desktop_native_capabilities","desktop_native_select_file","desktop_native_select_folder","desktop_native_reveal_path","desktop_native_read_clipboard","desktop_native_write_clipboard","desktop_native_notify","desktop_native_open_external_url"]
