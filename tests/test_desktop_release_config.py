@@ -13,7 +13,7 @@ def test_release_identity_and_version_are_consistent() -> None:
     package = json.loads((DESKTOP / "package.json").read_text(encoding="utf-8"))
     tauri = json.loads((DESKTOP / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
     cargo = tomllib.loads((DESKTOP / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8"))
-    assert package["version"] == tauri["version"] == cargo["package"]["version"] == "0.1.1"
+    assert package["version"] == tauri["version"] == cargo["package"]["version"] == "0.1.2"
     assert tauri["productName"] == "Prometheus"
     assert tauri["identifier"] == "com.resatkahraman.prometheus"
 

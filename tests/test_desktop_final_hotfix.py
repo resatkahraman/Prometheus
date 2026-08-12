@@ -1,5 +1,12 @@
 from pathlib import Path
 import json
+from types import SimpleNamespace
+
+import httpx
+import pytest
+
+from app.core.config import Settings
+from app.main import app
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,8 +27,8 @@ def test_release_gui_and_version_contract() -> None:
     tauri = json.loads((DESKTOP / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
     cargo = (DESKTOP / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
     main = (TAURI_SRC / "main.rs").read_text(encoding="utf-8")
-    assert package["version"] == tauri["version"] == "0.1.1"
-    assert 'version="0.1.1"' in cargo
+    assert package["version"] == tauri["version"] == "0.1.2"
+    assert 'version="0.1.2"' in cargo
     assert 'windows_subsystem = "windows"' in main
 
 
@@ -43,3 +50,44 @@ def test_desktop_submit_keeps_csrf_and_canonical_transport() -> None:
     config = (ROOT / "app" / "core" / "config.py").read_text(encoding="utf-8")
     for model in ("gemma4:e4b-it-qat", "embeddinggemma:300m-qat-q4_0", "ministral-3:3b"):
         assert model in config
+
+
+@pytest.mark.asyncio
+async def test_desktop_command_transport_accepts_valid_request_and_rejects_boundary_failures() -> None:
+    previous_settings = getattr(app.state, "settings", None)
+    previous_supervisor = getattr(app.state, "supervisor", None)
+
+    class FakeSupervisor:
+        async def create(self, **kwargs):
+            assert kwargs["goal"] == "durum raporu"
+            return SimpleNamespace(
+                id="mission-hotfix-002",
+                status="planning",
+                operation_message="accepted",
+                plan_text=None,
+                failure_reason=None,
+                tasks=[],
+                decisions=[],
+            )
+
+    app.state.settings = Settings(_env_file=None, http_remote_access_enabled=False)
+    app.state.supervisor = FakeSupervisor()
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+            valid = await client.post("/v1/desktop/command", json={"message": "durum raporu"}, headers={"host": "localhost:8765", "X-Prometheus-CSRF": "1"})
+            missing_csrf = await client.post("/v1/desktop/command", json={"message": "durum raporu"}, headers={"host": "localhost:8765"})
+            invalid_body = await client.post("/v1/desktop/command", json={"message": "   "}, headers={"host": "localhost:8765", "X-Prometheus-CSRF": "1"})
+        assert valid.status_code == 200
+        assert valid.json()["mission_id"] == "mission-hotfix-002"
+        assert missing_csrf.status_code == 403
+        assert invalid_body.status_code == 422
+    finally:
+        if previous_settings is None:
+            try:
+                delattr(app.state, "settings")
+            except AttributeError:
+                pass
+        else:
+            app.state.settings = previous_settings
+        app.state.supervisor = previous_supervisor

@@ -11,7 +11,7 @@ DESKTOP-002 status: Implementation complete and automated-validated; manual Desk
 DESKTOP-PKG-001 status: COMPLETE
 Previous Desktop task: DESKTOP-RUNTIME-001 - Bounded Core Runtime Lifecycle
 DESKTOP-006 status: Completed and validated.
-Current Desktop task: HOTFIX-DESKTOP-FINAL-001 - Windows Release Acceptance Blockers completed and automated-validated.
+Current Desktop task: HOTFIX-DESKTOP-FINAL-002 - Persistent Window Drag + Command Submit Blockers completed and automated-validated.
 Next architectural stage: DESKTOP-FINAL-ACCEPTANCE - Comprehensive Manual End-to-End Acceptance Test
 Canonical local self-development promotion chain: TASK-059 -> TASK-071 complete.
 Remote publication automation: not implemented.
@@ -36,6 +36,8 @@ DESKTOP-008 finalizes the Windows release-candidate shell at version `0.1.0`. Th
 
 HOTFIX-DESKTOP-FINAL-001 resolves the first installed-build blockers. The custom titlebar now uses a dedicated `data-tauri-drag-region` surface without swallowing window-control clicks. Release builds use the Windows GUI subsystem, and the bounded canonical Python Core child uses Windows `CREATE_NO_WINDOW`; no shell, arbitrary process, Python discovery, auto-start or auto-restart authority was added. Desktop command submission now sends the canonical `X-Prometheus-CSRF: 1` header required by the Core security middleware while preserving loopback transport and HTTP authentication. Version metadata is synchronized to `0.1.1`.
 The validated NSIS artifact is `Prometheus_0.1.1_x64-setup.exe` (2,693,379 bytes; SHA-256 `874D0B3FDF231B30F036C733721DB152E3ABA31BCB2F31F4A3B127ED259EC7BD`). It is unsigned (`NotSigned`) and updater infrastructure remains not configured. Targeted validation: 19 passed; focused Desktop/security regression: 65 passed; npm ci: 73 packages with 0 vulnerabilities; frontend build: PASS; Rust tests: 16 passed; cargo check: PASS; final full pytest: 983 passed with the existing Starlette/httpx TestClient deprecation warning. Installer execution and comprehensive end-to-end acceptance remain the next supervised stage.
+
+HOTFIX-DESKTOP-FINAL-002 resolves the remaining acceptance blockers. The dedicated titlebar surface now has a typed `startDragging()` fallback restricted to left-button presses on that surface, while controls remain outside it. The command composer no longer silently no-ops when Core is unavailable: it remains truthful and displays the readiness/authentication reason; ready submissions use the exact authenticated loopback `/v1/desktop/command` contract with CSRF. A direct ASGI regression covers acceptance, missing-CSRF rejection and invalid-body rejection. The validated 0.1.2 NSIS artifact is `Prometheus_0.1.2_x64-setup.exe` (2,693,298 bytes; SHA-256 `8CA65E713EBB018A5C8C26139ACB083B6D217B524E9D9228DC9C37C27B315C80`), unsigned with updater not configured. Targeted validation: 15 passed; focused regression: 66 passed; npm ci: 73 packages with 0 vulnerabilities; frontend build: PASS; Rust tests: 16 passed; cargo check: PASS; final full pytest: 984 passed with the existing Starlette/httpx TestClient deprecation warning.
 
 DESKTOP-001 validation:
 - npm dependency installation: PASS (73 packages installed, 0 vulnerabilities)
