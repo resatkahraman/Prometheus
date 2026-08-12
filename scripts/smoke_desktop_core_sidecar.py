@@ -13,7 +13,7 @@ SIDECAR = ROOT / "desktop" / "src-tauri" / "binaries" / "prometheus-core-x86_64-
 def main() -> None:
     if not SIDECAR.is_file():
         raise SystemExit("Core sidecar is missing.")
-    with tempfile.TemporaryDirectory(prefix="prometheus-core-smoke-") as cwd:
+    with tempfile.TemporaryDirectory(prefix="prometheus-core-smoke-", ignore_cleanup_errors=True) as cwd:
         environment = os.environ.copy()
         environment["PROMETHEUS_DESKTOP_CORE_PORT"] = "18765"
         process = subprocess.Popen([str(SIDECAR)], cwd=cwd, env=environment, creationflags=0x08000000)

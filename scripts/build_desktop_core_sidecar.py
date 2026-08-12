@@ -33,7 +33,7 @@ def python_with_pyinstaller() -> str:
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     python = python_with_pyinstaller()
-    command = [python, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--noconsole", "--name", NAME, "--paths", str(ROOT), "--distpath", str(OUTPUT_DIR), "--workpath", str(ROOT / "build" / "desktop-core-sidecar"), "--specpath", str(ROOT / "build" / "desktop-core-sidecar"), str(ROOT / "app" / "desktop_server.py")]
+    command = [python, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--noconsole", "--name", NAME, "--paths", str(ROOT), "--add-data", f"{ROOT / 'config' / 'skill_manifests.json'};config", "--distpath", str(OUTPUT_DIR), "--workpath", str(ROOT / "build" / "desktop-core-sidecar"), "--specpath", str(ROOT / "build" / "desktop-core-sidecar"), str(ROOT / "app" / "desktop_server.py")]
     subprocess.run(command, cwd=ROOT, check=True)
     artifact = OUTPUT_DIR / f"{NAME}.exe"
     if not artifact.is_file() or artifact.stat().st_size == 0:

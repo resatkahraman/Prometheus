@@ -2,9 +2,11 @@ use reqwest::{redirect::Policy, Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::time::Duration;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 pub const CORE_HOST: &str = "127.0.0.1";
 pub const DEFAULT_CORE_PORT: u16 = 8765;
+static RUNTIME_PORT: AtomicU16 = AtomicU16::new(0);
 const CSRF_HEADER_NAME: &str = "X-Prometheus-CSRF";
 const CSRF_HEADER_VALUE: &str = "1";
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
@@ -62,7 +64,9 @@ pub fn resolve_port(value: Option<&str>) -> u16 {
     value.and_then(|raw| raw.trim().parse::<u16>().ok()).filter(|port| (1024..=65535).contains(port)).unwrap_or(DEFAULT_CORE_PORT)
 }
 
-pub fn configured_port() -> u16 { resolve_port(env::var("PROMETHEUS_DESKTOP_CORE_PORT").ok().as_deref()) }
+pub fn set_runtime_port(port: u16) { RUNTIME_PORT.store(port, Ordering::SeqCst); }
+pub fn clear_runtime_port() { RUNTIME_PORT.store(0, Ordering::SeqCst); }
+pub fn configured_port() -> u16 { let runtime = RUNTIME_PORT.load(Ordering::SeqCst); if (1024..=65535).contains(&runtime) { runtime } else { resolve_port(env::var("PROMETHEUS_DESKTOP_CORE_PORT").ok().as_deref()) } }
 
 fn client(timeout: Duration) -> Result<Client, TransportFailure> {
     Client::builder().redirect(Policy::none()).connect_timeout(Duration::from_millis(1500)).timeout(timeout).build().map_err(|_| TransportFailure { code: "core_error", message: "Core istemcisi başlatılamadı." })
