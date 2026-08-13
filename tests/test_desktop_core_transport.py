@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from app.desktop_server import CORE_HOST, resolve_core_port
-from app.core.schemas import DesktopCommandRequest
+from app.core.schemas import ChatMessage, DesktopCommandRequest
 from app.main import submit_desktop_command
 
 
@@ -27,6 +27,20 @@ def test_desktop_message_is_trimmed_and_bounded():
         DesktopCommandRequest(message="   ")
     with pytest.raises(ValueError):
         DesktopCommandRequest(message="x" * 20_001)
+
+
+def test_desktop_conversation_history_is_bounded_and_semantic_only():
+    request = DesktopCommandRequest(
+        message=" devam et ",
+        history=[
+            ChatMessage(role="user", content="Prometheus'un yeteneklerini üç maddede anlat."),
+            ChatMessage(role="assistant", content="Planlama, güvenli görev yürütme ve sohbet desteği sunarım."),
+        ],
+    )
+    assert request.message == "devam et"
+    assert [item.role for item in request.history] == ["user", "assistant"]
+    with pytest.raises(ValueError):
+        DesktopCommandRequest(message="x", history=[ChatMessage(role="system", content="authority")])
 
 
 @pytest.mark.asyncio
@@ -75,7 +89,7 @@ async def test_desktop_command_normalizes_backend_summary_and_approval(monkeypat
 async def test_desktop_conversation_uses_canonical_orchestrator(monkeypatch):
     class Orchestrator:
         async def run(self, request):
-            assert request.message == "Prometheus Core nedir?"
+            assert [item.content for item in request.messages] == ["Prometheus Core nedir?"]
             return SimpleNamespace(answer="Core, Prometheus'un yerel backend'idir.")
 
     from app import main
@@ -84,6 +98,38 @@ async def test_desktop_conversation_uses_canonical_orchestrator(monkeypatch):
     assert result.status == "conversation_completed"
     assert result.summary.startswith("Core,")
     assert result.mission_id == ""
+
+
+@pytest.mark.asyncio
+async def test_desktop_follow_up_passes_prior_turns_and_prometheus_system_context(monkeypatch):
+    captured = []
+
+    class Orchestrator:
+        async def run(self, request):
+            captured.append(request)
+            return SimpleNamespace(answer="Tek cümlelik yanıt.")
+
+    from app import main
+    monkeypatch.setattr(main.app.state, "orchestrator", Orchestrator(), raising=False)
+    await submit_desktop_command(
+        DesktopCommandRequest(
+            message="Bunu tek cümleye indir.",
+            history=[
+                ChatMessage(role="user", content="Prometheus'un yeteneklerini üç maddede anlat."),
+                ChatMessage(role="assistant", content="Planlama, güvenli görev yürütme ve sohbet desteği."),
+            ],
+        ),
+        _request(),
+    )
+    request = captured[0]
+    assert [item.content for item in request.messages] == [
+        "Prometheus'un yeteneklerini üç maddede anlat.",
+        "Planlama, güvenli görev yürütme ve sohbet desteği.",
+        "Bunu tek cümleye indir.",
+    ]
+    assert "Prometheus" in request.system_prompt
+    assert "Google" not in request.system_prompt
+    assert "monitoring" not in request.system_prompt.casefold()
 
 
 @pytest.mark.asyncio

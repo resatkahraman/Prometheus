@@ -1,6 +1,6 @@
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 Role = Literal["system", "user", "assistant"]
@@ -400,6 +400,16 @@ class SupervisorCreateRequest(BaseModel):
 
 class DesktopCommandRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20_000)
+    # Keep only a small, user-visible conversational window.  System messages
+    # are an authority boundary and must never arrive from the desktop client.
+    history: list[ChatMessage] = Field(default_factory=list, max_length=12)
+
+    @field_validator("history")
+    @classmethod
+    def validate_history_roles(cls, history: list[ChatMessage]) -> list[ChatMessage]:
+        if any(item.role not in {"user", "assistant"} for item in history):
+            raise ValueError("desktop history may contain only user and assistant turns.")
+        return history
 
     @model_validator(mode="after")
     def normalize_message(self) -> "DesktopCommandRequest":

@@ -32,6 +32,17 @@ fn select_loopback_port() -> Result<u16, String> { TcpListener::bind((core_trans
 #[cfg(windows)] fn configure_child_process(command: &mut Command) { use std::os::windows::process::CommandExt; command.creation_flags(0x0800_0000); }
 #[cfg(not(windows))] fn configure_child_process(_command: &mut Command) {}
 
+fn terminate_owned_child(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        // The PID comes only from this process's Child handle. /T confines the
+        // termination to descendants owned by this launched sidecar.
+        let _ = Command::new("taskkill").args(["/PID", &child.id().to_string(), "/T", "/F"]).status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 pub async fn status(shared: SharedRuntime) -> RuntimeStatus {
     let current = { let mut guard = shared.lock().expect("runtime lock"); if child_alive(&mut guard) { return guard.status(); } guard.lifecycle.clone() };
     if matches!(current, RuntimeLifecycle::ManagedStarting | RuntimeLifecycle::ManagedReady | RuntimeLifecycle::ManagedStopping) { core_transport::clear_runtime_port(); let mut guard = shared.lock().expect("runtime lock"); guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::ManagedExited, "managed_exited", "Desktop tarafından başlatılan Core kapandı."); return guard.status(); }
@@ -50,14 +61,14 @@ pub async fn start(app: AppHandle, shared: SharedRuntime) -> Result<RuntimeStatu
         { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.endpoint_port = Some(selected_port); guard.child = Some(child); set_error(&mut guard, RuntimeLifecycle::ManagedStarting, "starting", "Core başlatılıyor…"); }
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline { { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; if !child_alive(&mut guard) { break; } } if matches!(core_transport::health().await.state, CoreState::Ready) { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; set_error(&mut guard, RuntimeLifecycle::ManagedReady, "managed_ready", "Desktop tarafından yönetilen Core hazır."); return Ok(guard.status()); } pause(Duration::from_millis(500)); }
-        let mut child = { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.child.take() }; if let Some(ref mut owned) = child { let _ = owned.kill(); let _ = owned.wait(); } { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::LaunchFailed, "core_bind_failed", "Core başlatılamadı."); }
+        let mut child = { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.child.take() }; if let Some(ref mut owned) = child { terminate_owned_child(owned); } { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::LaunchFailed, "core_bind_failed", "Core başlatılamadı."); }
         core_transport::clear_runtime_port();
         if attempt + 1 == MAX_START_ATTEMPTS { return Err("core_bind_failed".into()); }
     }
     Err("core_bind_failed".into())
 }
 
-pub async fn stop(shared: SharedRuntime) -> Result<RuntimeStatus, String> { let mut child = { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; if !child_alive(&mut guard) { core_transport::clear_runtime_port(); guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::ManagedExited, "already_stopped", "Desktop tarafından yönetilen Core çalışmıyor."); return Ok(guard.status()); } set_error(&mut guard, RuntimeLifecycle::ManagedStopping, "stopping", "Core durduruluyor…"); guard.child.take() }; if let Some(ref mut owned) = child { let _ = owned.kill(); let started = Instant::now(); while started.elapsed() < Duration::from_secs(5) { if owned.try_wait().map_err(|_| "stop_failed".to_string())?.is_some() { core_transport::clear_runtime_port(); let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::ManagedExited, "stopped", "Desktop tarafından yönetilen Core durduruldu."); return Ok(guard.status()); } pause(Duration::from_millis(100)); } return Err("stop_timeout".into()); } Err("stop_not_authorized".into()) }
+pub async fn stop(shared: SharedRuntime) -> Result<RuntimeStatus, String> { let mut child = { let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; if !child_alive(&mut guard) { core_transport::clear_runtime_port(); guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::ManagedExited, "already_stopped", "Desktop tarafından yönetilen Core çalışmıyor."); return Ok(guard.status()); } set_error(&mut guard, RuntimeLifecycle::ManagedStopping, "stopping", "Core durduruluyor…"); guard.child.take() }; if let Some(ref mut owned) = child { terminate_owned_child(owned); core_transport::clear_runtime_port(); let mut guard = shared.lock().map_err(|_| "runtime_lock".to_string())?; guard.endpoint_port = None; set_error(&mut guard, RuntimeLifecycle::ManagedExited, "stopped", "Desktop tarafından yönetilen Core durduruldu."); return Ok(guard.status()); } Err("stop_not_authorized".into()) }
 
 #[cfg(test)]
 mod tests { use super::*; #[test] fn sidecar_identity_is_canonical() { assert_eq!(SIDECAR_NAME, "prometheus-core.exe"); assert_eq!(MAX_START_ATTEMPTS, 3); } #[test] fn runtime_port_is_os_selected() { let port = select_loopback_port().unwrap(); assert!((1024..=65535).contains(&port)); } #[test] fn runtime_starts_without_external_inputs() { assert!(python_path().is_none() || python_path().unwrap().ends_with("python.exe")); } #[test] fn ownership_defaults_to_no_stop() { let status = CoreRuntime::new().status(); assert!(!status.can_stop && status.can_start); } }

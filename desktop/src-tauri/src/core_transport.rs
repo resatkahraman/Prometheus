@@ -22,8 +22,11 @@ pub struct DesktopModelProfile { pub route_key: String, pub canonical_id: String
 #[derive(Clone, Deserialize, Serialize)]
 pub struct DesktopModelCatalog { pub models: Vec<DesktopModelProfile>, pub agents: Vec<serde_json::Value>, pub routing_information: String }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub struct DesktopConversationTurn { pub role: String, pub content: String }
+
 #[derive(Serialize)]
-pub struct DesktopCommandRequest { pub message: String }
+pub struct DesktopCommandRequest { pub message: String, pub history: Vec<DesktopConversationTurn> }
 
 #[derive(Deserialize, Serialize)]
 pub struct DesktopCommandResponse { pub status: String, pub mission_id: String, pub summary: Option<String>, pub requires_approval: bool }
@@ -162,9 +165,9 @@ pub async fn desktop_model_catalog() -> Result<DesktopModelCatalog, TransportFai
     response_json(response).await
 }
 
-pub async fn submit(message: String) -> Result<DesktopCommandResponse, TransportFailure> {
+pub async fn submit(message: String, history: Vec<DesktopConversationTurn>) -> Result<DesktopCommandResponse, TransportFailure> {
     let client = client(Duration::from_secs(120))?;
-    let request = auth_header(client.post(endpoint("/v1/desktop/command")).header(CSRF_HEADER_NAME, CSRF_HEADER_VALUE).json(&DesktopCommandRequest { message }));
+    let request = auth_header(client.post(endpoint("/v1/desktop/command")).header(CSRF_HEADER_NAME, CSRF_HEADER_VALUE).json(&DesktopCommandRequest { message, history }));
     let response = request.send().await.map_err(|error| if error.is_timeout() { TransportFailure { code: "timeout", message: "Core bağlantısı zaman aşımına uğradı." } } else { TransportFailure { code: "core_offline", message: "Core bağlantısı kesildi. Komut otomatik olarak yeniden gönderilmedi." } })?;
     let status = response.status();
     let body = bounded_body(response).await?;
@@ -183,4 +186,5 @@ mod tests {
     #[test] fn port_override_is_bounded_without_default() { assert_eq!(resolve_port(Some("4321")), 4321); assert_eq!(resolve_port(Some("80")), 0); assert_eq!(resolve_port(Some("65536")), 0); assert_eq!(resolve_port(Some("nope")), 0); }
     #[test] fn canonical_endpoints_are_loopback_only() { set_runtime_port(4321); assert_eq!(CORE_HOST, "127.0.0.1"); assert_eq!(endpoint("/v1/health"), "http://127.0.0.1:4321/v1/health"); clear_runtime_port(); }
     #[test] fn mission_and_approval_paths_are_bounded() { assert!(mission_path("mission-1", "").unwrap().ends_with("/mission-1")); assert!(mission_path("mission-1", "/history?limit=50").unwrap().ends_with("/history?limit=50")); assert!(mission_path("mission-1", "/execution-receipts?limit=50").is_ok()); assert!(task_path("mission-1", "task-1", "approve").unwrap().ends_with("/tasks/task-1/approve")); assert!(review_path("mission-1", "approval-1").unwrap().ends_with("/approvals/approval-1/review")); assert!(mission_path("../escape", "").is_err()); assert!(task_path("mission-1", "task/escape", "reject").is_err()); assert!(review_path("mission-1", "approval/escape").is_err()); assert!(valid_segment("approval-1")); assert!(!valid_segment("")); }
+    #[test] fn command_payload_preserves_conversation_history() { let payload = serde_json::to_value(DesktopCommandRequest { message: "continue".into(), history: vec![DesktopConversationTurn { role: "assistant".into(), content: "Earlier answer".into() }] }).unwrap(); assert_eq!(payload["history"][0]["content"], "Earlier answer"); }
 }

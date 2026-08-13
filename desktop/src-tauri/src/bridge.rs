@@ -1,6 +1,6 @@
 use serde::Serialize;
 use crate::core_runtime::{self, RuntimeStatus, SharedRuntime};
-use crate::core_transport::{self, ApprovalReviewView, CoreStatus, DesktopCommandResponse, DesktopModelCatalog, MemoryPageView, MissionEventsView, MissionHistoryView, MissionView, ReceiptPageView, TransportFailure};
+use crate::core_transport::{self, ApprovalReviewView, CoreStatus, DesktopCommandResponse, DesktopConversationTurn, DesktopModelCatalog, MemoryPageView, MissionEventsView, MissionHistoryView, MissionView, ReceiptPageView, TransportFailure};
 use crate::native_os::{self, NativeCapability, NativeEnvironmentInfo, NativeOsError, NativeOsState};
 #[derive(Serialize)]pub struct Bootstrap{revision:&'static str,product:&'static str,surface:&'static str,native:bool,core:Core,authority:Authority}
 #[derive(Serialize)]struct Core{state:&'static str,detail:&'static str}
@@ -11,7 +11,7 @@ use crate::native_os::{self, NativeCapability, NativeEnvironmentInfo, NativeOsEr
 #[tauri::command]pub async fn desktop_runtime_status(state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{let runtime=state.inner().clone();Ok(core_runtime::status(runtime).await)}
 #[tauri::command]pub async fn desktop_start_core(app:tauri::AppHandle,state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{core_runtime::start(app,state.inner().clone()).await}
 #[tauri::command]pub async fn desktop_stop_core(state:tauri::State<'_, SharedRuntime>)->Result<RuntimeStatus,String>{core_runtime::stop(state.inner().clone()).await}
-#[tauri::command]pub async fn desktop_submit_command(message:String)->Result<DesktopCommandResponse,TransportFailure>{core_transport::submit(message).await}
+#[tauri::command]pub async fn desktop_submit_command(message:String,history:Vec<DesktopConversationTurn>)->Result<DesktopCommandResponse,TransportFailure>{core_transport::submit(message,history).await}
 #[tauri::command]pub async fn desktop_mission(mission_id:String)->Result<MissionView,TransportFailure>{core_transport::mission(mission_id).await}
 #[tauri::command]pub async fn desktop_mission_events(mission_id:String)->Result<MissionEventsView,TransportFailure>{core_transport::mission_events(mission_id).await}
 #[tauri::command]pub async fn desktop_mission_history(mission_id:String)->Result<MissionHistoryView,TransportFailure>{core_transport::mission_history(mission_id).await}

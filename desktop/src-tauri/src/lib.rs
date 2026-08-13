@@ -3,6 +3,9 @@ mod core_transport;
 mod core_runtime;
 mod native_os;
 use tauri::Manager;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+struct ShutdownState(AtomicBool);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(native_os::NativeOsState::default())
+        .manage(ShutdownState(AtomicBool::new(false)))
         .manage(std::sync::Arc::new(std::sync::Mutex::new(core_runtime::CoreRuntime::new())))
         .setup(|app| {
             let handle = app.handle().clone();
@@ -37,6 +41,8 @@ pub fn run() {
         .expect("error while building Prometheus")
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let shutdown = app_handle.state::<ShutdownState>();
+                if shutdown.0.swap(true, Ordering::SeqCst) { return; }
                 api.prevent_exit();
                 let runtime = app_handle.state::<core_runtime::SharedRuntime>().inner().clone();
                 let handle = app_handle.clone();

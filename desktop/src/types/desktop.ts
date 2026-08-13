@@ -7,7 +7,8 @@ export interface DesktopModelProfile{route_key:string;canonical_id:string;displa
 export interface DesktopModelCatalog{models:DesktopModelProfile[];agents:Record<string,unknown>[];routing_information:string}
 export interface NativeCapability{capability_id:string;available:boolean;platform:string;requires_user_gesture:boolean}
 export interface NativeEnvironmentInfo{os_family:string;architecture:string;application_version:string;runtime_platform:string;core_runtime_requirement:string;updater_state:string;code_signing_state:string}
-export interface DesktopCommandRequest{message:string}
+export interface DesktopConversationTurn{role:'user'|'assistant';content:string}
+export interface DesktopCommandRequest{message:string;history?:DesktopConversationTurn[]}
 export interface DesktopCommandResponse{status:string;mission_id:string;summary:string|null;requires_approval:boolean;route?:string;answer?:string|null}
 export interface MissionTask{ id:string; title:string; status:string; assigned_agent:string; approval_id:string|null; approval_version:number; approval_state:string; approval_description:string|null; approval_preview:unknown|null; approval_tool:string|null; last_approval_message:string|null }
 export interface Mission{ id:string; goal:string; status:string; tasks:MissionTask[]; created_at:string; updated_at?:string|null; operation_message?:string|null; failure_reason?:string|null }

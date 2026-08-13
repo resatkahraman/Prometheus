@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ApprovalReview, CoreStatus, DesktopBootstrap, DesktopCommandResponse, DesktopModelCatalog, MemoryPage, Mission, MissionEvents, MissionHistory, NativeCapability, NativeEnvironmentInfo, ReceiptPage, RuntimeStatus } from '../types/desktop';
+import type { ApprovalReview, CoreStatus, DesktopBootstrap, DesktopCommandResponse, DesktopConversationTurn, DesktopModelCatalog, MemoryPage, Mission, MissionEvents, MissionHistory, NativeCapability, NativeEnvironmentInfo, ReceiptPage, RuntimeStatus } from '../types/desktop';
 
 const native = () => '__TAURI_INTERNALS__' in window;
 const previewStatus: CoreStatus = { state: 'preview', code: 'preview', message: 'Core transport is available only in the native application.' };
@@ -14,9 +14,9 @@ export async function getDesktopCoreStatus(): Promise<CoreStatus> {
   return invoke<CoreStatus>('desktop_core_status');
 }
 
-export async function submitDesktopCommand(message: string): Promise<DesktopCommandResponse> {
+export async function submitDesktopCommand(message: string, history: DesktopConversationTurn[] = []): Promise<DesktopCommandResponse> {
   if (!native()) throw { code: 'core_offline', message: 'Core is available only in the native application.' };
-  return invoke<DesktopCommandResponse>('desktop_submit_command', { message });
+  return invoke<DesktopCommandResponse>('desktop_submit_command', { message, history });
 }
 
 export async function getDesktopMission(missionId: string): Promise<Mission> {
